@@ -1,0 +1,7 @@
+{
+  "prodver_url": "http://prodver/control",
+  "shard_name": "shard1",
+  "github_org": "tailscale",
+  "github_repo": "corp",
+  "project_number": 42
+}
