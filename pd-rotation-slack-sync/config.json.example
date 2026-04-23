@@ -1,8 +1,14 @@
 {
   "mappings": [
     {
-      "pagerduty_schedule_id": "P2H5CBI",
-      "slack_usergroup_id": "S0AV190BG8H"
+      "team": "TEAM 1",
+      "pagerduty_schedule_id": "P2XXXXX",
+      "slack_usergroup_id": "SXXXXXXXXXX"
+    },
+    {
+      "team": "TEAM 2",
+      "pagerduty_schedule_id": "P2XXXXX",
+      "slack_usergroup_id": "SXXXXXXXXXX"
     }
   ]
 }
