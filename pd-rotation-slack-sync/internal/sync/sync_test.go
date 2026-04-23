@@ -29,13 +29,18 @@ type mockSlack struct {
 	users     map[string]string // email -> user ID
 	lookupErr error
 	updateErr error
+	dmErr     error
 
+	groupMembers  map[string][]string // group ID -> current member IDs
+	membersErr    error
 	updatedGroups map[string][]string // group ID -> user IDs
+	dmsSent       []string            // user IDs that received DMs
 }
 
 func newMockSlack() *mockSlack {
 	return &mockSlack{
 		users:         make(map[string]string),
+		groupMembers:  make(map[string][]string),
 		updatedGroups: make(map[string][]string),
 	}
 }
@@ -51,11 +56,26 @@ func (m *mockSlack) LookupUserByEmail(_ context.Context, email string) (string, 
 	return id, nil
 }
 
+func (m *mockSlack) GetUserGroupMembers(_ context.Context, groupID string) ([]string, error) {
+	if m.membersErr != nil {
+		return nil, m.membersErr
+	}
+	return m.groupMembers[groupID], nil
+}
+
 func (m *mockSlack) UpdateUserGroupMembers(_ context.Context, groupID string, userIDs []string) error {
 	if m.updateErr != nil {
 		return m.updateErr
 	}
 	m.updatedGroups[groupID] = userIDs
+	return nil
+}
+
+func (m *mockSlack) SendDM(_ context.Context, userID, text string) error {
+	if m.dmErr != nil {
+		return m.dmErr
+	}
+	m.dmsSent = append(m.dmsSent, userID)
 	return nil
 }
 
@@ -191,5 +211,70 @@ func TestRun_SlackUpdateError(t *testing.T) {
 
 	if err := s.Run(context.Background()); err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestRun_DMSentOnUserChange(t *testing.T) {
+	pd := &mockPD{emails: map[string]string{"P1": "jane@example.com"}}
+	sl := newMockSlack()
+	sl.users["jane@example.com"] = "U123"
+	sl.groupMembers["S1"] = []string{"U999"} // different user currently in group
+
+	s := &Syncer{
+		PD:       pd,
+		Slack:    sl,
+		Mappings: []config.Mapping{{PagerDutyScheduleID: "P1", SlackUserGroupID: "S1"}},
+		Logger:   slog.Default(),
+	}
+
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sl.dmsSent) != 1 || sl.dmsSent[0] != "U123" {
+		t.Errorf("dmsSent = %v, want [U123]", sl.dmsSent)
+	}
+}
+
+func TestRun_NoDMWhenUserUnchanged(t *testing.T) {
+	pd := &mockPD{emails: map[string]string{"P1": "jane@example.com"}}
+	sl := newMockSlack()
+	sl.users["jane@example.com"] = "U123"
+	sl.groupMembers["S1"] = []string{"U123"} // same user already in group
+
+	s := &Syncer{
+		PD:       pd,
+		Slack:    sl,
+		Mappings: []config.Mapping{{PagerDutyScheduleID: "P1", SlackUserGroupID: "S1"}},
+		Logger:   slog.Default(),
+	}
+
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sl.dmsSent) != 0 {
+		t.Errorf("dmsSent = %v, want none", sl.dmsSent)
+	}
+}
+
+func TestRun_DMFailureDoesNotFailSync(t *testing.T) {
+	pd := &mockPD{emails: map[string]string{"P1": "jane@example.com"}}
+	sl := newMockSlack()
+	sl.users["jane@example.com"] = "U123"
+	sl.groupMembers["S1"] = []string{"U999"}
+	sl.dmErr = errors.New("DM failed")
+
+	s := &Syncer{
+		PD:       pd,
+		Slack:    sl,
+		Mappings: []config.Mapping{{PagerDutyScheduleID: "P1", SlackUserGroupID: "S1"}},
+		Logger:   slog.Default(),
+	}
+
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("DM failure should not cause sync error, got: %v", err)
+	}
+	// Group should still have been updated.
+	if users := sl.updatedGroups["S1"]; len(users) != 1 || users[0] != "U123" {
+		t.Errorf("updatedGroups[S1] = %v, want [U123]", users)
 	}
 }

@@ -7,7 +7,9 @@ Syncs PagerDuty on-call rotations to Slack user groups. For each configured mapp
 1. For each mapping in `config.json`:
    - Queries the PagerDuty API for the current on-call user on the given schedule
    - Looks up the on-call user's email in Slack
+   - Checks the current members of the Slack user group
    - Updates the Slack user group to contain that user
+   - If the on-call user changed, sends them a DM notifying them they've been added to the group
 
 ## Setup
 
@@ -23,7 +25,9 @@ Syncs PagerDuty on-call rotations to Slack user groups. For each configured mapp
 - Create a Slack app (or use an existing one) with the following bot token scopes:
   - `users:read.email` — look up users by email
   - `users:read` — read user profiles
+  - `usergroups:read` — read user group membership
   - `usergroups:write` — update user group membership
+  - `chat:write` — send DM notifications to on-call users
 - Install the app to your workspace and copy the bot token (`xoxb-...`)
 
 ### 2. Configure environment

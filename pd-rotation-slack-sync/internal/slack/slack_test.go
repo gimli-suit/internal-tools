@@ -93,3 +93,82 @@ func TestUpdateUserGroupMembers_Failure(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestGetUserGroupMembers_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/usergroups.users.list" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("usergroup") != "S456" {
+			t.Errorf("unexpected usergroup param: %s", r.URL.Query().Get("usergroup"))
+		}
+		fmt.Fprint(w, `{"ok": true, "users": ["U123", "U456"]}`)
+	}))
+	defer srv.Close()
+
+	client := &Client{HTTPClient: srv.Client(), APIToken: "xoxb-test", BaseURL: srv.URL}
+	users, err := client.GetUserGroupMembers(context.Background(), "S456")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(users) != 2 || users[0] != "U123" || users[1] != "U456" {
+		t.Errorf("users = %v, want [U123, U456]", users)
+	}
+}
+
+func TestGetUserGroupMembers_Failure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"ok": false, "error": "no_such_subteam"}`)
+	}))
+	defer srv.Close()
+
+	client := &Client{HTTPClient: srv.Client(), APIToken: "xoxb-test", BaseURL: srv.URL}
+	_, err := client.GetUserGroupMembers(context.Background(), "S999")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestSendDM_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat.postMessage" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+
+		var body dmRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if body.Channel != "U123" {
+			t.Errorf("channel = %q, want %q", body.Channel, "U123")
+		}
+		if body.Text != "Hello!" {
+			t.Errorf("text = %q, want %q", body.Text, "Hello!")
+		}
+
+		fmt.Fprint(w, `{"ok": true}`)
+	}))
+	defer srv.Close()
+
+	client := &Client{HTTPClient: srv.Client(), APIToken: "xoxb-test", BaseURL: srv.URL}
+	err := client.SendDM(context.Background(), "U123", "Hello!")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSendDM_Failure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"ok": false, "error": "channel_not_found"}`)
+	}))
+	defer srv.Close()
+
+	client := &Client{HTTPClient: srv.Client(), APIToken: "xoxb-test", BaseURL: srv.URL}
+	err := client.SendDM(context.Background(), "U999", "Hello!")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
