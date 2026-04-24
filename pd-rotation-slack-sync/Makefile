@@ -1,6 +1,9 @@
 BINARY = pd-slack-sync
 
-.PHONY: build run install test
+.PHONY: build run install test clean
+
+clean:
+	rm -f $(BINARY)
 
 build:
 	go build -o $(BINARY) .
