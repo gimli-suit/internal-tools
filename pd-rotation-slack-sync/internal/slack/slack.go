@@ -14,7 +14,7 @@ type UserGroupUpdater interface {
 	LookupUserByEmail(ctx context.Context, email string) (string, error)
 	GetUserGroupMembers(ctx context.Context, groupID string) ([]string, error)
 	UpdateUserGroupMembers(ctx context.Context, groupID string, userIDs []string) error
-	SendDM(ctx context.Context, userID, text string) error
+	PostMessage(ctx context.Context, channelID, text string) error
 }
 
 type Client struct {
@@ -132,24 +132,26 @@ func (c *Client) UpdateUserGroupMembers(ctx context.Context, groupID string, use
 	return nil
 }
 
-type dmRequest struct {
+type postMessageRequest struct {
 	Channel string `json:"channel"`
 	Text    string `json:"text"`
 }
 
-func (c *Client) SendDM(ctx context.Context, userID, text string) error {
-	body := dmRequest{
-		Channel: userID,
+// PostMessage sends a message to a channel or DM. When channelID is a user ID,
+// Slack automatically opens/reuses a DM conversation.
+func (c *Client) PostMessage(ctx context.Context, channelID, text string) error {
+	body := postMessageRequest{
+		Channel: channelID,
 		Text:    text,
 	}
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("marshaling DM request: %w", err)
+		return fmt.Errorf("marshaling message request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat.postMessage", bytes.NewReader(jsonBody))
 	if err != nil {
-		return fmt.Errorf("creating DM request: %w", err)
+		return fmt.Errorf("creating message request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.APIToken)
 	req.Header.Set("Content-Type", "application/json")
@@ -162,7 +164,7 @@ func (c *Client) SendDM(ctx context.Context, userID, text string) error {
 
 	var result slackResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decoding DM response: %w", err)
+		return fmt.Errorf("decoding message response: %w", err)
 	}
 
 	if !result.OK {

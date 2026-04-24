@@ -10,6 +10,7 @@ Syncs PagerDuty on-call rotations to Slack user groups. For each configured mapp
    - Checks the current members of the Slack user group
    - Updates the Slack user group to contain that user
    - If the on-call user changed, sends them a DM notifying them they've been added to the group
+   - If a channel and message are configured, posts a notification to the team channel
 
 ## Setup
 
@@ -27,7 +28,7 @@ Syncs PagerDuty on-call rotations to Slack user groups. For each configured mapp
   - `users:read` — read user profiles
   - `usergroups:read` — read user group membership
   - `usergroups:write` — update user group membership
-  - `chat:write` — send DM notifications to on-call users
+  - `chat:write` — send DM notifications and channel messages
 - Install the app to your workspace and copy the bot token (`xoxb-...`)
 
 ### 2. Configure environment
@@ -53,7 +54,9 @@ SLACK_API_TOKEN=xoxb-your-slack-bot-token
   "mappings": [
     {
       "pagerduty_schedule_id": "P2H5CBI",
-      "slack_usergroup_id": "S0AV190BG8H"
+      "slack_usergroup_id": "S0AV190BG8H",
+      "slack_channel_id": "C0123456789",
+      "notification_message": "{@user} is now on-call for the team!"
     }
   ]
 }
@@ -63,6 +66,8 @@ SLACK_API_TOKEN=xoxb-your-slack-bot-token
 |-------|-------------|
 | `pagerduty_schedule_id` | PagerDuty schedule ID (found in the schedule URL) |
 | `slack_usergroup_id` | Slack user group ID to update with the on-call user |
+| `slack_channel_id` | *(optional)* Slack channel ID to post rotation change notifications |
+| `notification_message` | *(optional)* Message template for channel notifications. Use `{@user}` to mention the new on-call user |
 
 You can add multiple mappings to sync several rotations at once.
 

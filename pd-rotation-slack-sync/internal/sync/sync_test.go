@@ -29,12 +29,12 @@ type mockSlack struct {
 	users     map[string]string // email -> user ID
 	lookupErr error
 	updateErr error
-	dmErr     error
+	msgErr    error
 
-	groupMembers  map[string][]string // group ID -> current member IDs
+	groupMembers  map[string][]string      // group ID -> current member IDs
 	membersErr    error
-	updatedGroups map[string][]string // group ID -> user IDs
-	dmsSent       []string            // user IDs that received DMs
+	updatedGroups map[string][]string      // group ID -> user IDs
+	messages      map[string][]string      // channel/userID -> list of messages sent
 }
 
 func newMockSlack() *mockSlack {
@@ -42,6 +42,7 @@ func newMockSlack() *mockSlack {
 		users:         make(map[string]string),
 		groupMembers:  make(map[string][]string),
 		updatedGroups: make(map[string][]string),
+		messages:      make(map[string][]string),
 	}
 }
 
@@ -71,11 +72,11 @@ func (m *mockSlack) UpdateUserGroupMembers(_ context.Context, groupID string, us
 	return nil
 }
 
-func (m *mockSlack) SendDM(_ context.Context, userID, text string) error {
-	if m.dmErr != nil {
-		return m.dmErr
+func (m *mockSlack) PostMessage(_ context.Context, channelID, text string) error {
+	if m.msgErr != nil {
+		return m.msgErr
 	}
-	m.dmsSent = append(m.dmsSent, userID)
+	m.messages[channelID] = append(m.messages[channelID], text)
 	return nil
 }
 
@@ -230,8 +231,8 @@ func TestRun_DMSentOnUserChange(t *testing.T) {
 	if err := s.Run(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(sl.dmsSent) != 1 || sl.dmsSent[0] != "U123" {
-		t.Errorf("dmsSent = %v, want [U123]", sl.dmsSent)
+	if msgs := sl.messages["U123"]; len(msgs) != 1 {
+		t.Errorf("DMs to U123 = %v, want 1 message", msgs)
 	}
 }
 
@@ -251,17 +252,17 @@ func TestRun_NoDMWhenUserUnchanged(t *testing.T) {
 	if err := s.Run(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(sl.dmsSent) != 0 {
-		t.Errorf("dmsSent = %v, want none", sl.dmsSent)
+	if len(sl.messages) != 0 {
+		t.Errorf("messages = %v, want none", sl.messages)
 	}
 }
 
-func TestRun_DMFailureDoesNotFailSync(t *testing.T) {
+func TestRun_MessageFailureDoesNotFailSync(t *testing.T) {
 	pd := &mockPD{emails: map[string]string{"P1": "jane@example.com"}}
 	sl := newMockSlack()
 	sl.users["jane@example.com"] = "U123"
 	sl.groupMembers["S1"] = []string{"U999"}
-	sl.dmErr = errors.New("DM failed")
+	sl.msgErr = errors.New("message failed")
 
 	s := &Syncer{
 		PD:       pd,
@@ -271,10 +272,99 @@ func TestRun_DMFailureDoesNotFailSync(t *testing.T) {
 	}
 
 	if err := s.Run(context.Background()); err != nil {
-		t.Fatalf("DM failure should not cause sync error, got: %v", err)
+		t.Fatalf("message failure should not cause sync error, got: %v", err)
 	}
-	// Group should still have been updated.
 	if users := sl.updatedGroups["S1"]; len(users) != 1 || users[0] != "U123" {
 		t.Errorf("updatedGroups[S1] = %v, want [U123]", users)
+	}
+}
+
+func TestRun_ChannelNotificationOnChange(t *testing.T) {
+	pd := &mockPD{emails: map[string]string{"P1": "jane@example.com"}}
+	sl := newMockSlack()
+	sl.users["jane@example.com"] = "U123"
+	sl.groupMembers["S1"] = []string{"U999"} // different user — triggers notification
+
+	s := &Syncer{
+		PD:    pd,
+		Slack: sl,
+		Mappings: []config.Mapping{{
+			PagerDutyScheduleID: "P1",
+			SlackUserGroupID:    "S1",
+			SlackChannelID:      "C_TEAM",
+			NotificationMessage: "{@user} is now on-call!",
+		}},
+		Logger: slog.Default(),
+	}
+
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should have DM to user and message to channel.
+	if msgs := sl.messages["U123"]; len(msgs) != 1 {
+		t.Errorf("DMs to U123 = %v, want 1", msgs)
+	}
+	channelMsgs := sl.messages["C_TEAM"]
+	if len(channelMsgs) != 1 {
+		t.Fatalf("channel messages = %v, want 1", channelMsgs)
+	}
+	want := "<@U123> is now on-call!"
+	if channelMsgs[0] != want {
+		t.Errorf("channel message = %q, want %q", channelMsgs[0], want)
+	}
+}
+
+func TestRun_NoChannelNotificationWhenUnchanged(t *testing.T) {
+	pd := &mockPD{emails: map[string]string{"P1": "jane@example.com"}}
+	sl := newMockSlack()
+	sl.users["jane@example.com"] = "U123"
+	sl.groupMembers["S1"] = []string{"U123"} // same user — no notification
+
+	s := &Syncer{
+		PD:    pd,
+		Slack: sl,
+		Mappings: []config.Mapping{{
+			PagerDutyScheduleID: "P1",
+			SlackUserGroupID:    "S1",
+			SlackChannelID:      "C_TEAM",
+			NotificationMessage: "{@user} is now on-call!",
+		}},
+		Logger: slog.Default(),
+	}
+
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sl.messages) != 0 {
+		t.Errorf("messages = %v, want none", sl.messages)
+	}
+}
+
+func TestRun_NoChannelNotificationWhenNotConfigured(t *testing.T) {
+	pd := &mockPD{emails: map[string]string{"P1": "jane@example.com"}}
+	sl := newMockSlack()
+	sl.users["jane@example.com"] = "U123"
+	sl.groupMembers["S1"] = []string{"U999"} // user changed
+
+	s := &Syncer{
+		PD:    pd,
+		Slack: sl,
+		Mappings: []config.Mapping{{
+			PagerDutyScheduleID: "P1",
+			SlackUserGroupID:    "S1",
+			// No SlackChannelID or NotificationMessage configured.
+		}},
+		Logger: slog.Default(),
+	}
+
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// DM should still be sent, but no channel message.
+	if msgs := sl.messages["U123"]; len(msgs) != 1 {
+		t.Errorf("DMs to U123 = %v, want 1", msgs)
+	}
+	if _, ok := sl.messages["C_TEAM"]; ok {
+		t.Error("expected no channel message when not configured")
 	}
 }

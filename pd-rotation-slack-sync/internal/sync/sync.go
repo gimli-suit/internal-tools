@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/pd-rotation-slack-sync/internal/config"
 	"github.com/pd-rotation-slack-sync/internal/pagerduty"
@@ -58,13 +59,24 @@ func (s *Syncer) syncOne(ctx context.Context, m config.Mapping) error {
 	}
 	s.Logger.Info("sync complete", "schedule_id", m.PagerDutyScheduleID, "usergroup_id", m.SlackUserGroupID, "user_id", slackUserID)
 
-	// DM the user if they are newly added to the group.
+	// Notify if the on-call user changed.
 	if !containsUser(currentMembers, slackUserID) {
+		// DM the new on-call user.
 		msg := "You have been added to the on-call user group."
-		if err := s.Slack.SendDM(ctx, slackUserID, msg); err != nil {
+		if err := s.Slack.PostMessage(ctx, slackUserID, msg); err != nil {
 			s.Logger.Warn("failed to DM on-call user", "user_id", slackUserID, "error", err)
 		} else {
 			s.Logger.Info("notified on-call user via DM", "user_id", slackUserID)
+		}
+
+		// Post to the team channel if configured.
+		if m.SlackChannelID != "" && m.NotificationMessage != "" {
+			channelMsg := strings.ReplaceAll(m.NotificationMessage, "{@user}", fmt.Sprintf("<@%s>", slackUserID))
+			if err := s.Slack.PostMessage(ctx, m.SlackChannelID, channelMsg); err != nil {
+				s.Logger.Warn("failed to post channel notification", "channel", m.SlackChannelID, "error", err)
+			} else {
+				s.Logger.Info("posted channel notification", "channel", m.SlackChannelID)
+			}
 		}
 	}
 

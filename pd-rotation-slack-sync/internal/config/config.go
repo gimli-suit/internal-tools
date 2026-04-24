@@ -11,6 +11,8 @@ import (
 type Mapping struct {
 	PagerDutyScheduleID string `json:"pagerduty_schedule_id"`
 	SlackUserGroupID    string `json:"slack_usergroup_id"`
+	SlackChannelID      string `json:"slack_channel_id,omitempty"`
+	NotificationMessage string `json:"notification_message,omitempty"`
 }
 
 type Config struct {

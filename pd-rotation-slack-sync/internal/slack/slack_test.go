@@ -129,7 +129,7 @@ func TestGetUserGroupMembers_Failure(t *testing.T) {
 	}
 }
 
-func TestSendDM_Success(t *testing.T) {
+func TestPostMessage_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat.postMessage" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
@@ -138,7 +138,7 @@ func TestSendDM_Success(t *testing.T) {
 			t.Errorf("unexpected method: %s", r.Method)
 		}
 
-		var body dmRequest
+		var body postMessageRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decoding body: %v", err)
 		}
@@ -154,20 +154,20 @@ func TestSendDM_Success(t *testing.T) {
 	defer srv.Close()
 
 	client := &Client{HTTPClient: srv.Client(), APIToken: "xoxb-test", BaseURL: srv.URL}
-	err := client.SendDM(context.Background(), "U123", "Hello!")
+	err := client.PostMessage(context.Background(), "U123", "Hello!")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestSendDM_Failure(t *testing.T) {
+func TestPostMessage_Failure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"ok": false, "error": "channel_not_found"}`)
 	}))
 	defer srv.Close()
 
 	client := &Client{HTTPClient: srv.Client(), APIToken: "xoxb-test", BaseURL: srv.URL}
-	err := client.SendDM(context.Background(), "U999", "Hello!")
+	err := client.PostMessage(context.Background(), "U999", "Hello!")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
