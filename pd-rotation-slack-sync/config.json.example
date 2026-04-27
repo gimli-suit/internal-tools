@@ -5,7 +5,7 @@
       "pagerduty_schedule_id": "P2XXXXX",
       "slack_usergroup_id": "SXXXXXXXXXX",
       "slack_channel_id": "CXXXXXXXXXX",
-      "notification_message": "{@user} is now on-call for Team 1!"
+      "notification_message": "{@user} is now the BGP for Team 1!"
     },
     {
       "team": "TEAM 2",
