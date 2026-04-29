@@ -23,11 +23,12 @@ func (s *Syncer) Run(ctx context.Context) error {
 	var errs []error
 
 	for _, m := range s.Mappings {
-		s.Logger.Info("syncing mapping", "schedule_id", m.PagerDutyScheduleID, "usergroup_id", m.SlackUserGroupID)
+		name := m.DisplayName()
+		s.Logger.Info("syncing mapping", "team", name, "usergroup_id", m.SlackUserGroupID)
 
 		if err := s.syncOne(ctx, m); err != nil {
-			s.Logger.Error("mapping failed", "schedule_id", m.PagerDutyScheduleID, "usergroup_id", m.SlackUserGroupID, "error", err)
-			errs = append(errs, fmt.Errorf("schedule %s -> usergroup %s: %w", m.PagerDutyScheduleID, m.SlackUserGroupID, err))
+			s.Logger.Error("mapping failed", "team", name, "error", err)
+			errs = append(errs, fmt.Errorf("%s -> usergroup %s: %w", name, m.SlackUserGroupID, err))
 		}
 	}
 
@@ -35,11 +36,12 @@ func (s *Syncer) Run(ctx context.Context) error {
 }
 
 func (s *Syncer) syncOne(ctx context.Context, m config.Mapping) error {
+	name := m.DisplayName()
 	email, err := s.PD.GetCurrentOnCallEmail(ctx, m.PagerDutyScheduleID)
 	if err != nil {
 		return fmt.Errorf("pagerduty: get on-call: %w", err)
 	}
-	s.Logger.Info("found on-call user", "schedule_id", m.PagerDutyScheduleID, "email", email)
+	s.Logger.Info("found on-call user", "team", name, "email", email)
 
 	slackUserID, err := s.Slack.LookupUserByEmail(ctx, email)
 	if err != nil {
@@ -57,7 +59,7 @@ func (s *Syncer) syncOne(ctx context.Context, m config.Mapping) error {
 	if err := s.Slack.UpdateUserGroupMembers(ctx, m.SlackUserGroupID, []string{slackUserID}); err != nil {
 		return fmt.Errorf("slack: update usergroup: %w", err)
 	}
-	s.Logger.Info("sync complete", "schedule_id", m.PagerDutyScheduleID, "usergroup_id", m.SlackUserGroupID, "user_id", slackUserID)
+	s.Logger.Info("sync complete", "team", name, "user_id", slackUserID)
 
 	// Notify if the on-call user changed.
 	if !containsUser(currentMembers, slackUserID) {

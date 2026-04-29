@@ -9,10 +9,19 @@ import (
 )
 
 type Mapping struct {
+	Team                string `json:"team,omitempty"`
 	PagerDutyScheduleID string `json:"pagerduty_schedule_id"`
 	SlackUserGroupID    string `json:"slack_usergroup_id"`
 	SlackChannelID      string `json:"slack_channel_id,omitempty"`
 	NotificationMessage string `json:"notification_message,omitempty"`
+}
+
+// DisplayName returns the team name if set, otherwise the PagerDuty schedule ID.
+func (m Mapping) DisplayName() string {
+	if m.Team != "" {
+		return m.Team
+	}
+	return m.PagerDutyScheduleID
 }
 
 type Config struct {
