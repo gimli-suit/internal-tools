@@ -135,7 +135,7 @@ func TestRun_MultipleMappings(t *testing.T) {
 	}
 }
 
-func TestRun_PartialFailure(t *testing.T) {
+func TestRun_AbortsOnFirstError(t *testing.T) {
 	pd := &mockPD{emails: map[string]string{
 		"PSCHED1": "jane@example.com",
 		// PSCHED2 missing — will error
@@ -149,18 +149,50 @@ func TestRun_PartialFailure(t *testing.T) {
 		Mappings: []config.Mapping{
 			{PagerDutyScheduleID: "PSCHED1", SlackUserGroupID: "S111"},
 			{PagerDutyScheduleID: "PSCHED2", SlackUserGroupID: "S222"},
+			{PagerDutyScheduleID: "PSCHED1", SlackUserGroupID: "S333"},
 		},
 		Logger: slog.Default(),
 	}
 
 	err := s.Run(context.Background())
 	if err == nil {
-		t.Fatal("expected error for partial failure, got nil")
+		t.Fatal("expected error, got nil")
 	}
 
-	// First mapping should still have succeeded
+	// First mapping should have succeeded.
 	if users := sl.updatedGroups["S111"]; len(users) != 1 || users[0] != "U123" {
 		t.Errorf("S111 should have succeeded, got %v", users)
+	}
+	// Third mapping should never have been attempted.
+	if _, ok := sl.updatedGroups["S333"]; ok {
+		t.Error("S333 should not have been attempted after S222 failed")
+	}
+}
+
+func TestRun_GetMembersError_Aborts(t *testing.T) {
+	pd := &mockPD{emails: map[string]string{"P1": "jane@example.com"}}
+	sl := newMockSlack()
+	sl.users["jane@example.com"] = "U123"
+	sl.membersErr = errors.New("connection reset")
+
+	s := &Syncer{
+		PD:       pd,
+		Slack:    sl,
+		Mappings: []config.Mapping{{PagerDutyScheduleID: "P1", SlackUserGroupID: "S1"}},
+		Logger:   slog.Default(),
+	}
+
+	err := s.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error when GetUserGroupMembers fails, got nil")
+	}
+	// Should not have updated the group.
+	if _, ok := sl.updatedGroups["S1"]; ok {
+		t.Error("should not update usergroup when member fetch fails")
+	}
+	// Should not have sent any messages.
+	if len(sl.messages) != 0 {
+		t.Errorf("should not send messages when member fetch fails, got %v", sl.messages)
 	}
 }
 
@@ -255,6 +287,10 @@ func TestRun_NoDMWhenUserUnchanged(t *testing.T) {
 	if len(sl.messages) != 0 {
 		t.Errorf("messages = %v, want none", sl.messages)
 	}
+	// Should skip the update entirely when user is unchanged.
+	if _, ok := sl.updatedGroups["S1"]; ok {
+		t.Error("expected no usergroup update when on-call user is unchanged")
+	}
 }
 
 func TestRun_MessageFailureDoesNotFailSync(t *testing.T) {
@@ -337,6 +373,9 @@ func TestRun_NoChannelNotificationWhenUnchanged(t *testing.T) {
 	}
 	if len(sl.messages) != 0 {
 		t.Errorf("messages = %v, want none", sl.messages)
+	}
+	if _, ok := sl.updatedGroups["S1"]; ok {
+		t.Error("expected no usergroup update when on-call user is unchanged")
 	}
 }
 

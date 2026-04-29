@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -20,21 +19,19 @@ type Syncer struct {
 }
 
 func (s *Syncer) Run(ctx context.Context) error {
-	var errs []error
-
 	for _, m := range s.Mappings {
 		name := m.DisplayName()
 		s.Logger.Info(("---"))
 		s.Logger.Info("syncing mapping", "team", name, "usergroup_id", m.SlackUserGroupID)
 
 		if err := s.syncOne(ctx, m); err != nil {
-			s.Logger.Error("mapping failed", "team", name, "error", err)
-			errs = append(errs, fmt.Errorf("%s -> usergroup %s: %w", name, m.SlackUserGroupID, err))
+			s.Logger.Error("mapping failed, aborting remaining syncs", "team", name, "error", err)
+			return fmt.Errorf("%s -> usergroup %s: %w", name, m.SlackUserGroupID, err)
 		}
 	}
 	s.Logger.Info(("----------------"))
 
-	return errors.Join(errs...)
+	return nil
 }
 
 func (s *Syncer) syncOne(ctx context.Context, m config.Mapping) error {
@@ -54,8 +51,13 @@ func (s *Syncer) syncOne(ctx context.Context, m config.Mapping) error {
 	// Check current members to detect changes.
 	currentMembers, err := s.Slack.GetUserGroupMembers(ctx, m.SlackUserGroupID)
 	if err != nil {
-		s.Logger.Warn("could not fetch current group members, skipping DM", "error", err)
-		currentMembers = nil
+		return fmt.Errorf("slack: get current group members: %w", err)
+	}
+
+	// Skip update if the on-call user is already the sole member.
+	if len(currentMembers) == 1 && currentMembers[0] == slackUserID {
+		s.Logger.Info("no change, skipping update", "team", name, "user_id", slackUserID)
+		return nil
 	}
 
 	if err := s.Slack.UpdateUserGroupMembers(ctx, m.SlackUserGroupID, []string{slackUserID}); err != nil {
@@ -63,7 +65,7 @@ func (s *Syncer) syncOne(ctx context.Context, m config.Mapping) error {
 	}
 	s.Logger.Info("sync complete", "team", name)
 
-	// Notify if the on-call user changed.
+	// Notify since the on-call user changed.
 	if !containsUser(currentMembers, slackUserID) {
 		// DM the new on-call user.
 		msg := "You have been added to the on-call user group."
