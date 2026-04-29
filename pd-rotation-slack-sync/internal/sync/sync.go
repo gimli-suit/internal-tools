@@ -24,6 +24,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 
 	for _, m := range s.Mappings {
 		name := m.DisplayName()
+		s.Logger.Info(("---"))
 		s.Logger.Info("syncing mapping", "team", name, "usergroup_id", m.SlackUserGroupID)
 
 		if err := s.syncOne(ctx, m); err != nil {
@@ -31,6 +32,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("%s -> usergroup %s: %w", name, m.SlackUserGroupID, err))
 		}
 	}
+	s.Logger.Info(("----------------"))
 
 	return errors.Join(errs...)
 }
@@ -59,7 +61,7 @@ func (s *Syncer) syncOne(ctx context.Context, m config.Mapping) error {
 	if err := s.Slack.UpdateUserGroupMembers(ctx, m.SlackUserGroupID, []string{slackUserID}); err != nil {
 		return fmt.Errorf("slack: update usergroup: %w", err)
 	}
-	s.Logger.Info("sync complete", "team", name, "user_id", slackUserID)
+	s.Logger.Info("sync complete", "team", name)
 
 	// Notify if the on-call user changed.
 	if !containsUser(currentMembers, slackUserID) {
