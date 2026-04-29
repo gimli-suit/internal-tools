@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/github-deployed-issue-sync/internal/config"
+	"github.com/github-deployed-issue-sync/internal/ghauth"
 	"github.com/github-deployed-issue-sync/internal/github"
 	"github.com/github-deployed-issue-sync/internal/prodver"
 	"github.com/github-deployed-issue-sync/internal/sync"
@@ -25,6 +26,12 @@ func main() {
 
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 
+	ghToken, err := ghauth.GetInstallationToken(ctx, httpClient, "https://api.github.com", cfg.GitHubAppID, cfg.GitHubAppInstallationID, cfg.GitHubAppPrivateKey)
+	if err != nil {
+		slog.Error("github app authentication failed", "error", err)
+		os.Exit(1)
+	}
+
 	prodverClient := &prodver.Client{
 		HTTPClient: httpClient,
 		URL:        cfg.ProdverURL,
@@ -33,7 +40,7 @@ func main() {
 
 	ghClient := &github.Client{
 		HTTPClient:    httpClient,
-		Token:         cfg.GitHubToken,
+		Token:         ghToken,
 		GraphQLURL:    "https://api.github.com/graphql",
 		RestBaseURL:   "https://api.github.com",
 		Org:           cfg.GitHubOrg,

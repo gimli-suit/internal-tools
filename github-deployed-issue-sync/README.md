@@ -14,21 +14,32 @@ The tool checks the deployed commit SHA from [prodver](http://prodver), then cro
 
 ## Setup
 
-### 1. Create a GitHub Personal Access Token
+### 1. Create a GitHub App
 
-**Fine-grained token** (preferred):
+1. Go to your organization's Settings > Developer settings > GitHub Apps > New GitHub App
+2. Fill in a name and homepage URL (can be any valid URL)
+3. Uncheck **Active** under Webhook (this tool doesn't use webhooks)
+4. Set the following permissions:
+   - **Repository permissions:** Contents → Read-only
+   - **Organization permissions:** Projects → Read and write
+5. Under "Where can this GitHub App be installed?", select **Only on this account**
+6. Click **Create GitHub App**
+7. On the app's General page, note the **App ID** (displayed near the top)
+8. Scroll to **Private keys** and click **Generate a private key** — this downloads a `.pem` file
 
-- Go to Settings > Developer settings > Personal access tokens > Fine-grained tokens
-- Set resource owner to `tailscale`
-- Repository access: select `tailscale/corp` (or the target repo)
-- Repository permissions: **Contents** → Read-only
-- Organization permissions: **Projects** → Read and write
+### 2. Install the GitHub App on your organization
 
-**Classic token** (if fine-grained isn't available):
+1. From your app's settings page, click **Install App** in the left sidebar
+2. Click **Install** next to your organization
+3. Choose **Only select repositories** and pick the target repository (e.g., `corp`)
+4. Click **Install**
+5. After installation, you'll be redirected to a URL like:
+   ```
+   https://github.com/organizations/tailscale/settings/installations/78901234
+   ```
+   The number at the end (`78901234`) is your **Installation ID** — save this for configuration
 
-- Scopes: `repo`, `project`
-
-### 2. Configure environment
+### 3. Configure environment
 
 Copy the example files and fill in your values:
 
@@ -37,11 +48,20 @@ cp .env.example .env
 cp config.json.example config.json
 ```
 
-**.env** — set your GitHub token:
+**.env** — set your GitHub App credentials:
 
 ```
-GITHUB_TOKEN=ghp_your_token_here
+GITHUB_APP_ID=123456
+GITHUB_APP_INSTALLATION_ID=78901234
+GITHUB_APP_PRIVATE_KEY_PATH=/path/to/your-app.private-key.pem
 ```
+
+| Variable | Description |
+|----------|-------------|
+| `GITHUB_APP_ID` | The App ID from your GitHub App's settings page |
+| `GITHUB_APP_INSTALLATION_ID` | The Installation ID (from the URL after installing the app on your org) |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | Path to the `.pem` private key file downloaded from the app settings |
+| `GITHUB_APP_PRIVATE_KEY` | Alternative: raw PEM content (useful in CI/containers). Takes precedence over `_PATH` if both are set. |
 
 **config.json** — configure the sync target:
 
@@ -63,7 +83,7 @@ GITHUB_TOKEN=ghp_your_token_here
 | `github_repo` | Repository to check merge commits against |
 | `project_number` | Project V2 number (from the project URL) |
 
-### 3. Build and run
+### 4. Build and run
 
 ```sh
 go build -o github-deployed-issue-sync .

@@ -25,9 +25,16 @@ func writeFile(t *testing.T, dir, name, content string) {
 	}
 }
 
+var appEnvVars = []string{
+	"GITHUB_APP_ID",
+	"GITHUB_APP_INSTALLATION_ID",
+	"GITHUB_APP_PRIVATE_KEY",
+	"GITHUB_APP_PRIVATE_KEY_PATH",
+}
+
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"GITHUB_TOKEN"} {
+	for _, key := range appEnvVars {
 		orig := os.Getenv(key)
 		os.Unsetenv(key)
 		t.Cleanup(func() {
@@ -36,6 +43,18 @@ func clearEnv(t *testing.T) {
 			}
 		})
 	}
+}
+
+func setAppEnv(t *testing.T) {
+	t.Helper()
+	os.Setenv("GITHUB_APP_ID", "12345")
+	os.Setenv("GITHUB_APP_INSTALLATION_ID", "67890")
+	os.Setenv("GITHUB_APP_PRIVATE_KEY", "fake-pem-content")
+	t.Cleanup(func() {
+		for _, key := range appEnvVars {
+			os.Unsetenv(key)
+		}
+	})
 }
 
 const validConfig = `{
@@ -50,9 +69,7 @@ func TestLoadSuccess(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	clearEnv(t)
-
-	os.Setenv("GITHUB_TOKEN", "ghp_test123")
-	t.Cleanup(func() { os.Unsetenv("GITHUB_TOKEN") })
+	setAppEnv(t)
 
 	writeFile(t, dir, "config.json", validConfig)
 
@@ -60,8 +77,14 @@ func TestLoadSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.GitHubToken != "ghp_test123" {
-		t.Errorf("got token %q, want %q", cfg.GitHubToken, "ghp_test123")
+	if cfg.GitHubAppID != 12345 {
+		t.Errorf("got app ID %d, want %d", cfg.GitHubAppID, 12345)
+	}
+	if cfg.GitHubAppInstallationID != 67890 {
+		t.Errorf("got installation ID %d, want %d", cfg.GitHubAppInstallationID, 67890)
+	}
+	if string(cfg.GitHubAppPrivateKey) != "fake-pem-content" {
+		t.Errorf("got private key %q, want %q", cfg.GitHubAppPrivateKey, "fake-pem-content")
 	}
 	if cfg.ProdverURL != "http://prodver/control" {
 		t.Errorf("got prodver_url %q, want %q", cfg.ProdverURL, "http://prodver/control")
@@ -80,16 +103,146 @@ func TestLoadSuccess(t *testing.T) {
 	}
 }
 
-func TestLoadMissingToken(t *testing.T) {
+func TestLoadMissingAppID(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	clearEnv(t)
+
+	os.Setenv("GITHUB_APP_INSTALLATION_ID", "67890")
+	os.Setenv("GITHUB_APP_PRIVATE_KEY", "fake-pem")
+	t.Cleanup(func() {
+		os.Unsetenv("GITHUB_APP_INSTALLATION_ID")
+		os.Unsetenv("GITHUB_APP_PRIVATE_KEY")
+	})
 
 	writeFile(t, dir, "config.json", validConfig)
 
 	_, err := Load()
 	if err == nil {
-		t.Fatal("expected error for missing GITHUB_TOKEN")
+		t.Fatal("expected error for missing GITHUB_APP_ID")
+	}
+}
+
+func TestLoadMissingInstallationID(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	clearEnv(t)
+
+	os.Setenv("GITHUB_APP_ID", "12345")
+	os.Setenv("GITHUB_APP_PRIVATE_KEY", "fake-pem")
+	t.Cleanup(func() {
+		os.Unsetenv("GITHUB_APP_ID")
+		os.Unsetenv("GITHUB_APP_PRIVATE_KEY")
+	})
+
+	writeFile(t, dir, "config.json", validConfig)
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for missing GITHUB_APP_INSTALLATION_ID")
+	}
+}
+
+func TestLoadMissingPrivateKey(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	clearEnv(t)
+
+	os.Setenv("GITHUB_APP_ID", "12345")
+	os.Setenv("GITHUB_APP_INSTALLATION_ID", "67890")
+	t.Cleanup(func() {
+		os.Unsetenv("GITHUB_APP_ID")
+		os.Unsetenv("GITHUB_APP_INSTALLATION_ID")
+	})
+
+	writeFile(t, dir, "config.json", validConfig)
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for missing private key")
+	}
+}
+
+func TestLoadInvalidAppID(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	clearEnv(t)
+
+	os.Setenv("GITHUB_APP_ID", "not-a-number")
+	os.Setenv("GITHUB_APP_INSTALLATION_ID", "67890")
+	os.Setenv("GITHUB_APP_PRIVATE_KEY", "fake-pem")
+	t.Cleanup(func() {
+		for _, key := range appEnvVars {
+			os.Unsetenv(key)
+		}
+	})
+
+	writeFile(t, dir, "config.json", validConfig)
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid GITHUB_APP_ID")
+	}
+}
+
+func TestLoadPrivateKeyFromFile(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	clearEnv(t)
+
+	keyPath := filepath.Join(dir, "app.pem")
+	if err := os.WriteFile(keyPath, []byte("pem-from-file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	os.Setenv("GITHUB_APP_ID", "12345")
+	os.Setenv("GITHUB_APP_INSTALLATION_ID", "67890")
+	os.Setenv("GITHUB_APP_PRIVATE_KEY_PATH", keyPath)
+	t.Cleanup(func() {
+		for _, key := range appEnvVars {
+			os.Unsetenv(key)
+		}
+	})
+
+	writeFile(t, dir, "config.json", validConfig)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(cfg.GitHubAppPrivateKey) != "pem-from-file" {
+		t.Errorf("got private key %q, want %q", cfg.GitHubAppPrivateKey, "pem-from-file")
+	}
+}
+
+func TestLoadDirectKeyTakesPrecedence(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	clearEnv(t)
+
+	keyPath := filepath.Join(dir, "app.pem")
+	if err := os.WriteFile(keyPath, []byte("pem-from-file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	os.Setenv("GITHUB_APP_ID", "12345")
+	os.Setenv("GITHUB_APP_INSTALLATION_ID", "67890")
+	os.Setenv("GITHUB_APP_PRIVATE_KEY", "pem-direct")
+	os.Setenv("GITHUB_APP_PRIVATE_KEY_PATH", keyPath)
+	t.Cleanup(func() {
+		for _, key := range appEnvVars {
+			os.Unsetenv(key)
+		}
+	})
+
+	writeFile(t, dir, "config.json", validConfig)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(cfg.GitHubAppPrivateKey) != "pem-direct" {
+		t.Errorf("got private key %q, want %q (direct should take precedence)", cfg.GitHubAppPrivateKey, "pem-direct")
 	}
 }
 
@@ -97,9 +250,7 @@ func TestLoadMissingConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	clearEnv(t)
-
-	os.Setenv("GITHUB_TOKEN", "ghp_test123")
-	t.Cleanup(func() { os.Unsetenv("GITHUB_TOKEN") })
+	setAppEnv(t)
 
 	_, err := Load()
 	if err == nil {
@@ -111,9 +262,7 @@ func TestLoadInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	clearEnv(t)
-
-	os.Setenv("GITHUB_TOKEN", "ghp_test123")
-	t.Cleanup(func() { os.Unsetenv("GITHUB_TOKEN") })
+	setAppEnv(t)
 
 	writeFile(t, dir, "config.json", "not json")
 
@@ -127,9 +276,7 @@ func TestLoadMissingFields(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	clearEnv(t)
-
-	os.Setenv("GITHUB_TOKEN", "ghp_test123")
-	t.Cleanup(func() { os.Unsetenv("GITHUB_TOKEN") })
+	setAppEnv(t)
 
 	writeFile(t, dir, "config.json", `{"prodver_url": "http://prodver/control"}`)
 
@@ -144,19 +291,25 @@ func TestLoadEnvFilePrecedence(t *testing.T) {
 	chdir(t, dir)
 	clearEnv(t)
 
-	writeFile(t, dir, ".env", "GITHUB_TOKEN=from_file")
+	writeFile(t, dir, ".env", "GITHUB_APP_ID=111\nGITHUB_APP_INSTALLATION_ID=222\nGITHUB_APP_PRIVATE_KEY=from_file")
 	writeFile(t, dir, "config.json", validConfig)
 
-	// Set env var — should take precedence over .env file
-	os.Setenv("GITHUB_TOKEN", "from_env")
-	t.Cleanup(func() { os.Unsetenv("GITHUB_TOKEN") })
+	// Set env vars — should take precedence over .env file.
+	os.Setenv("GITHUB_APP_ID", "999")
+	os.Setenv("GITHUB_APP_INSTALLATION_ID", "888")
+	os.Setenv("GITHUB_APP_PRIVATE_KEY", "from_env")
+	t.Cleanup(func() {
+		for _, key := range appEnvVars {
+			os.Unsetenv(key)
+		}
+	})
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.GitHubToken != "from_env" {
-		t.Errorf("got token %q, want %q (env should take precedence)", cfg.GitHubToken, "from_env")
+	if cfg.GitHubAppID != 999 {
+		t.Errorf("got app ID %d, want %d (env should take precedence)", cfg.GitHubAppID, 999)
 	}
 }
 
@@ -165,14 +318,17 @@ func TestLoadFromEnvFile(t *testing.T) {
 	chdir(t, dir)
 	clearEnv(t)
 
-	writeFile(t, dir, ".env", "GITHUB_TOKEN=from_dotenv")
+	writeFile(t, dir, ".env", "GITHUB_APP_ID=111\nGITHUB_APP_INSTALLATION_ID=222\nGITHUB_APP_PRIVATE_KEY=from_dotenv")
 	writeFile(t, dir, "config.json", validConfig)
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.GitHubToken != "from_dotenv" {
-		t.Errorf("got token %q, want %q", cfg.GitHubToken, "from_dotenv")
+	if cfg.GitHubAppID != 111 {
+		t.Errorf("got app ID %d, want %d", cfg.GitHubAppID, 111)
+	}
+	if string(cfg.GitHubAppPrivateKey) != "from_dotenv" {
+		t.Errorf("got private key %q, want %q", cfg.GitHubAppPrivateKey, "from_dotenv")
 	}
 }

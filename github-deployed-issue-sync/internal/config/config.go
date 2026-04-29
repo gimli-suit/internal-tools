@@ -5,16 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
 type Config struct {
-	GitHubToken   string
-	ProdverURL    string
-	ShardName     string
-	GitHubOrg     string
-	GitHubRepo    string
-	ProjectNumber int
+	GitHubAppID             int64
+	GitHubAppInstallationID int64
+	GitHubAppPrivateKey     []byte
+	ProdverURL              string
+	ShardName               string
+	GitHubOrg               string
+	GitHubRepo              string
+	ProjectNumber           int
 }
 
 type configFile struct {
@@ -25,13 +28,31 @@ type configFile struct {
 	ProjectNumber int    `json:"project_number"`
 }
 
-// Load reads the GitHub token from .env/environment and settings from config.json.
+// Load reads the GitHub App credentials from .env/environment and settings from config.json.
 func Load() (*Config, error) {
 	loadEnvFile(".env")
 
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		return nil, fmt.Errorf("missing required environment variable: GITHUB_TOKEN")
+	appIDStr := os.Getenv("GITHUB_APP_ID")
+	if appIDStr == "" {
+		return nil, fmt.Errorf("missing required environment variable: GITHUB_APP_ID")
+	}
+	appID, err := strconv.ParseInt(appIDStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid GITHUB_APP_ID %q: %w", appIDStr, err)
+	}
+
+	installIDStr := os.Getenv("GITHUB_APP_INSTALLATION_ID")
+	if installIDStr == "" {
+		return nil, fmt.Errorf("missing required environment variable: GITHUB_APP_INSTALLATION_ID")
+	}
+	installID, err := strconv.ParseInt(installIDStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid GITHUB_APP_INSTALLATION_ID %q: %w", installIDStr, err)
+	}
+
+	privateKey, err := loadPrivateKey()
+	if err != nil {
+		return nil, err
 	}
 
 	cf, err := loadConfigFile("config.json")
@@ -40,13 +61,32 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		GitHubToken:   token,
-		ProdverURL:    cf.ProdverURL,
-		ShardName:     cf.ShardName,
-		GitHubOrg:     cf.GitHubOrg,
-		GitHubRepo:    cf.GitHubRepo,
-		ProjectNumber: cf.ProjectNumber,
+		GitHubAppID:             appID,
+		GitHubAppInstallationID: installID,
+		GitHubAppPrivateKey:     privateKey,
+		ProdverURL:              cf.ProdverURL,
+		ShardName:               cf.ShardName,
+		GitHubOrg:               cf.GitHubOrg,
+		GitHubRepo:              cf.GitHubRepo,
+		ProjectNumber:           cf.ProjectNumber,
 	}, nil
+}
+
+// loadPrivateKey reads the GitHub App private key from GITHUB_APP_PRIVATE_KEY
+// (raw PEM content) or GITHUB_APP_PRIVATE_KEY_PATH (file path). Direct content
+// takes precedence if both are set.
+func loadPrivateKey() ([]byte, error) {
+	if key := os.Getenv("GITHUB_APP_PRIVATE_KEY"); key != "" {
+		return []byte(key), nil
+	}
+	if path := os.Getenv("GITHUB_APP_PRIVATE_KEY_PATH"); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("reading private key file %s: %w", path, err)
+		}
+		return data, nil
+	}
+	return nil, fmt.Errorf("missing required environment variable: GITHUB_APP_PRIVATE_KEY or GITHUB_APP_PRIVATE_KEY_PATH")
 }
 
 func loadConfigFile(path string) (*configFile, error) {
