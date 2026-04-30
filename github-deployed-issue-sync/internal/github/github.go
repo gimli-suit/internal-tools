@@ -26,20 +26,36 @@ type StatusUpdater interface {
 	UpdateItemStatus(ctx context.Context, projectID, itemID, fieldID, optionID string) error
 }
 
+// IterationUpdater updates a project item's iteration field.
+type IterationUpdater interface {
+	UpdateItemIteration(ctx context.Context, projectID, itemID, fieldID, iterationID string) error
+}
+
+// Iteration represents a project iteration (sprint).
+type Iteration struct {
+	ID        string
+	Title     string
+	StartDate string // "2026-01-01" format
+	Duration  int    // days
+}
+
 // ProjectData holds the project metadata and all items.
 type ProjectData struct {
-	ProjectID       string
-	StatusFieldID   string
-	ShippedOptionID string
-	StatusOptions   []string
-	Items           []ProjectItem
+	ProjectID        string
+	StatusFieldID    string
+	ShippedOptionID  string
+	StatusOptions    []string
+	IterationFieldID string
+	Iterations       []Iteration
+	Items            []ProjectItem
 }
 
 // ProjectItem is a single item in the project board.
 type ProjectItem struct {
-	ItemID        string
-	CurrentStatus string
-	Issue         *Issue
+	ItemID             string
+	CurrentStatus      string
+	CurrentIterationID string
+	Issue              *Issue
 }
 
 // Issue is a GitHub issue with its closing PRs.
@@ -47,6 +63,7 @@ type Issue struct {
 	Number     int
 	Title      string
 	Closed     bool
+	ClosedAt   string // ISO 8601 timestamp, e.g. "2026-04-15T10:30:00Z"
 	Repository string // "owner/repo"
 	ClosingPRs []PullRequest
 }
@@ -150,12 +167,31 @@ query($org: String!, $number: Int!, $cursor: String) {
   organization(login: $org) {
     projectV2(number: $number) {
       id
-      field(name: "Status") {
+      statusField: field(name: "Status") {
         ... on ProjectV2SingleSelectField {
           id
           options {
             id
             name
+          }
+        }
+      }
+      iterationField: field(name: "Iteration") {
+        ... on ProjectV2IterationField {
+          id
+          configuration {
+            iterations {
+              id
+              title
+              startDate
+              duration
+            }
+            completedIterations {
+              id
+              title
+              startDate
+              duration
+            }
           }
         }
       }
@@ -167,9 +203,14 @@ query($org: String!, $number: Int!, $cursor: String) {
         }
         nodes {
           id
-          fieldValueByName(name: "Status") {
+          statusValue: fieldValueByName(name: "Status") {
             ... on ProjectV2ItemFieldSingleSelectValue {
               name
+            }
+          }
+          iterationValue: fieldValueByName(name: "Iteration") {
+            ... on ProjectV2ItemFieldIterationValue {
+              iterationId
             }
           }
           content {
@@ -177,6 +218,7 @@ query($org: String!, $number: Int!, $cursor: String) {
               number
               title
               state
+              closedAt
               repository {
                 nameWithOwner
               }
@@ -227,14 +269,31 @@ query($org: String!, $number: Int!, $cursor: String) {
 type projectQueryResponse struct {
 	Organization struct {
 		ProjectV2 struct {
-			ID    string `json:"id"`
-			Field struct {
+			ID          string `json:"id"`
+			StatusField struct {
 				ID      string `json:"id"`
 				Options []struct {
 					ID   string `json:"id"`
 					Name string `json:"name"`
 				} `json:"options"`
-			} `json:"field"`
+			} `json:"statusField"`
+			IterationField struct {
+				ID            string `json:"id"`
+				Configuration struct {
+					Iterations []struct {
+						ID        string `json:"id"`
+						Title     string `json:"title"`
+						StartDate string `json:"startDate"`
+						Duration  int    `json:"duration"`
+					} `json:"iterations"`
+					CompletedIterations []struct {
+						ID        string `json:"id"`
+						Title     string `json:"title"`
+						StartDate string `json:"startDate"`
+						Duration  int    `json:"duration"`
+					} `json:"completedIterations"`
+				} `json:"configuration"`
+			} `json:"iterationField"`
 			Items struct {
 				TotalCount int `json:"totalCount"`
 				PageInfo   struct {
@@ -248,14 +307,18 @@ type projectQueryResponse struct {
 }
 
 type projectItemNode struct {
-	ID               string `json:"id"`
-	FieldValueByName struct {
+	ID          string `json:"id"`
+	StatusValue struct {
 		Name string `json:"name"`
-	} `json:"fieldValueByName"`
+	} `json:"statusValue"`
+	IterationValue struct {
+		IterationID string `json:"iterationId"`
+	} `json:"iterationValue"`
 	Content struct {
-		Number     int    `json:"number"`
-		Title      string `json:"title"`
-		State      string `json:"state"`
+		Number   int    `json:"number"`
+		Title    string `json:"title"`
+		State    string `json:"state"`
+		ClosedAt string `json:"closedAt"`
 		Repository *struct {
 			NameWithOwner string `json:"nameWithOwner"`
 		} `json:"repository"`
@@ -320,20 +383,28 @@ func (c *Client) GetProjectItems(ctx context.Context) (*ProjectData, error) {
 		// Set project metadata on first page.
 		if pd.ProjectID == "" {
 			pd.ProjectID = proj.ID
-			pd.StatusFieldID = proj.Field.ID
-			for _, opt := range proj.Field.Options {
+			pd.StatusFieldID = proj.StatusField.ID
+			for _, opt := range proj.StatusField.Options {
 				pd.StatusOptions = append(pd.StatusOptions, opt.Name)
 				normalized := strings.Join(strings.Fields(opt.Name), " ")
 				if normalized == "🚢 Shipped" {
 					pd.ShippedOptionID = opt.ID
 				}
 			}
+			pd.IterationFieldID = proj.IterationField.ID
+			for _, it := range proj.IterationField.Configuration.Iterations {
+				pd.Iterations = append(pd.Iterations, Iteration{ID: it.ID, Title: it.Title, StartDate: it.StartDate, Duration: it.Duration})
+			}
+			for _, it := range proj.IterationField.Configuration.CompletedIterations {
+				pd.Iterations = append(pd.Iterations, Iteration{ID: it.ID, Title: it.Title, StartDate: it.StartDate, Duration: it.Duration})
+			}
 		}
 
 		for _, node := range proj.Items.Nodes {
 			item := ProjectItem{
-				ItemID:        node.ID,
-				CurrentStatus: node.FieldValueByName.Name,
+				ItemID:             node.ID,
+				CurrentStatus:      node.StatusValue.Name,
+				CurrentIterationID: node.IterationValue.IterationID,
 			}
 
 			// Only process Issue content (skip DraftIssues, PRs added directly).
@@ -342,6 +413,7 @@ func (c *Client) GetProjectItems(ctx context.Context) (*ProjectData, error) {
 					Number:     node.Content.Number,
 					Title:      node.Content.Title,
 					Closed:     node.Content.State == "CLOSED",
+					ClosedAt:   node.Content.ClosedAt,
 					Repository: node.Content.Repository.NameWithOwner,
 				}
 				if timeline := node.Content.TimelineItems; timeline != nil {
@@ -483,4 +555,33 @@ func (c *Client) UpdateItemStatus(ctx context.Context, projectID, itemID, fieldI
 		"optionId":  optionID,
 	}
 	return c.graphqlRequest(ctx, updateStatusMutation, vars, nil)
+}
+
+// GraphQL mutation for updating a project item's iteration field.
+const updateIterationMutation = `
+mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $iterationId: String!) {
+  updateProjectV2ItemFieldValue(
+    input: {
+      projectId: $projectId
+      itemId: $itemId
+      fieldId: $fieldId
+      value: { iterationId: $iterationId }
+    }
+  ) {
+    projectV2Item {
+      id
+    }
+  }
+}
+`
+
+// UpdateItemIteration sets a project item's Iteration field.
+func (c *Client) UpdateItemIteration(ctx context.Context, projectID, itemID, fieldID, iterationID string) error {
+	vars := map[string]any{
+		"projectId":   projectID,
+		"itemId":      itemID,
+		"fieldId":     fieldID,
+		"iterationId": iterationID,
+	}
+	return c.graphqlRequest(ctx, updateIterationMutation, vars, nil)
 }

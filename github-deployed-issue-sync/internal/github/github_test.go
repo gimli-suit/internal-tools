@@ -10,136 +10,29 @@ import (
 	"testing"
 )
 
-func makeGraphQLResponse(data any) string {
-	d, _ := json.Marshal(data)
-	return `{"data":` + string(d) + `}`
-}
-
 func TestGetProjectItems(t *testing.T) {
-	response := makeGraphQLResponse(projectQueryResponse{
-		Organization: struct {
-			ProjectV2 struct {
-				ID    string `json:"id"`
-				Field struct {
-					ID      string `json:"id"`
-					Options []struct {
-						ID   string `json:"id"`
-						Name string `json:"name"`
-					} `json:"options"`
-				} `json:"field"`
-				Items struct {
-					TotalCount int `json:"totalCount"`
-					PageInfo   struct {
-						HasNextPage bool   `json:"hasNextPage"`
-						EndCursor   string `json:"endCursor"`
-					} `json:"pageInfo"`
-					Nodes []projectItemNode `json:"nodes"`
-				} `json:"items"`
-			} `json:"projectV2"`
-		}{
-			ProjectV2: struct {
-				ID    string `json:"id"`
-				Field struct {
-					ID      string `json:"id"`
-					Options []struct {
-						ID   string `json:"id"`
-						Name string `json:"name"`
-					} `json:"options"`
-				} `json:"field"`
-				Items struct {
-					TotalCount int `json:"totalCount"`
-					PageInfo   struct {
-						HasNextPage bool   `json:"hasNextPage"`
-						EndCursor   string `json:"endCursor"`
-					} `json:"pageInfo"`
-					Nodes []projectItemNode `json:"nodes"`
-				} `json:"items"`
-			}{
-				ID: "PVT_123",
-				Field: struct {
-					ID      string `json:"id"`
-					Options []struct {
-						ID   string `json:"id"`
-						Name string `json:"name"`
-					} `json:"options"`
-				}{
-					ID: "PVTSSF_status",
-					Options: []struct {
-						ID   string `json:"id"`
-						Name string `json:"name"`
-					}{
-						{ID: "opt_todo", Name: "Todo"},
-						{ID: "opt_shipped", Name: "\U0001F6A2 Shipped"},
-					},
-				},
-				Items: struct {
-					TotalCount int `json:"totalCount"`
-					PageInfo   struct {
-						HasNextPage bool   `json:"hasNextPage"`
-						EndCursor   string `json:"endCursor"`
-					} `json:"pageInfo"`
-					Nodes []projectItemNode `json:"nodes"`
-				}{
-					TotalCount: 1,
-					Nodes: []projectItemNode{
-						{
-							ID: "PVTI_item1",
-							FieldValueByName: struct {
-								Name string `json:"name"`
-							}{Name: "Todo"},
-							Content: struct {
-								Number     int    `json:"number"`
-								Title      string `json:"title"`
-								State      string `json:"state"`
-								Repository *struct {
-									NameWithOwner string `json:"nameWithOwner"`
-								} `json:"repository"`
-								TimelineItems *struct {
-									Nodes []timelineEventNode `json:"nodes"`
-								} `json:"timelineItems"`
-							}{
-								Number: 42,
-								Title:  "Fix the thing",
-								State:  "CLOSED",
-								Repository: &struct {
-									NameWithOwner string `json:"nameWithOwner"`
-								}{NameWithOwner: "tailscale/corp"},
-								TimelineItems: &struct {
-									Nodes []timelineEventNode `json:"nodes"`
-								}{
-									Nodes: []timelineEventNode{
-										{
-											Typename:        "CrossReferencedEvent",
-											WillCloseTarget: true,
-											Source: struct {
-												Number      int  `json:"number"`
-												Merged      bool `json:"merged"`
-												MergeCommit *struct {
-													OID string `json:"oid"`
-												} `json:"mergeCommit"`
-												Repository *struct {
-													NameWithOwner string `json:"nameWithOwner"`
-												} `json:"repository"`
-											}{
-												Number: 100,
-												Merged: true,
-												MergeCommit: &struct {
-													OID string `json:"oid"`
-												}{OID: "abc123"},
-												Repository: &struct {
-													NameWithOwner string `json:"nameWithOwner"`
-												}{NameWithOwner: "tailscale/corp"},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	})
+	response := `{"data":{"organization":{"projectV2":{
+		"id":"PVT_123",
+		"statusField":{"id":"PVTSSF_status","options":[{"id":"opt_todo","name":"Todo"},{"id":"opt_shipped","name":"🚢 Shipped"}]},
+		"iterationField":{"id":"PVTIF_iter","configuration":{
+			"iterations":[{"id":"iter_1","title":"Sprint 1","startDate":"2026-04-14","duration":14}],
+			"completedIterations":[{"id":"iter_0","title":"Sprint 0","startDate":"2026-03-31","duration":14}]
+		}},
+		"items":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{
+			"id":"PVTI_item1",
+			"statusValue":{"name":"Todo"},
+			"iterationValue":{"iterationId":""},
+			"content":{
+				"number":42,"title":"Fix the thing","state":"CLOSED","closedAt":"2026-04-15T10:30:00Z",
+				"repository":{"nameWithOwner":"tailscale/corp"},
+				"timelineItems":{"nodes":[{
+					"__typename":"CrossReferencedEvent",
+					"willCloseTarget":true,
+					"source":{"number":100,"merged":true,"mergeCommit":{"oid":"abc123"},"repository":{"nameWithOwner":"tailscale/corp"}}
+				}]}
+			}
+		}]}
+	}}}}`
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
@@ -188,6 +81,18 @@ func TestGetProjectItems(t *testing.T) {
 	if !pr.Merged || pr.MergeCommit != "abc123" {
 		t.Errorf("got PR merged=%v commit=%q, want merged=true commit=abc123", pr.Merged, pr.MergeCommit)
 	}
+	if pd.IterationFieldID != "PVTIF_iter" {
+		t.Errorf("got iteration field ID %q, want %q", pd.IterationFieldID, "PVTIF_iter")
+	}
+	if len(pd.Iterations) != 2 {
+		t.Fatalf("got %d iterations, want 2", len(pd.Iterations))
+	}
+	if pd.Iterations[0].Title != "Sprint 1" {
+		t.Errorf("got iteration 0 title %q, want %q", pd.Iterations[0].Title, "Sprint 1")
+	}
+	if !item.Issue.Closed || item.Issue.ClosedAt != "2026-04-15T10:30:00Z" {
+		t.Errorf("got closed=%v closedAt=%q", item.Issue.Closed, item.Issue.ClosedAt)
+	}
 }
 
 func TestGetProjectItems_GraphQLError(t *testing.T) {
@@ -218,14 +123,14 @@ func TestGetProjectItems_Pagination(t *testing.T) {
 
 		if page == 1 {
 			// First page — has next page.
-			resp := `{"data":{"organization":{"projectV2":{"id":"PVT_1","field":{"id":"F1","options":[{"id":"O1","name":"🚢 Shipped"}]},"items":{"pageInfo":{"hasNextPage":true,"endCursor":"cursor1"},"nodes":[{"id":"I1","fieldValueByName":{"name":"Todo"},"content":{"number":1,"title":"Issue 1","repository":{"nameWithOwner":"tailscale/corp"},"timelineItems":{"nodes":[]}}}]}}}}}`
+			resp := `{"data":{"organization":{"projectV2":{"id":"PVT_1","statusField":{"id":"F1","options":[{"id":"O1","name":"🚢 Shipped"}]},"iterationField":{"id":"IF1","configuration":{"iterations":[],"completedIterations":[]}},"items":{"totalCount":2,"pageInfo":{"hasNextPage":true,"endCursor":"cursor1"},"nodes":[{"id":"I1","statusValue":{"name":"Todo"},"iterationValue":{},"content":{"number":1,"title":"Issue 1","state":"OPEN","repository":{"nameWithOwner":"tailscale/corp"},"timelineItems":{"nodes":[]}}}]}}}}}`
 			w.Write([]byte(resp))
 		} else {
 			// Verify cursor was passed.
 			if !strings.Contains(string(body), "cursor1") {
 				t.Error("expected cursor1 in second request")
 			}
-			resp := `{"data":{"organization":{"projectV2":{"id":"PVT_1","field":{"id":"F1","options":[{"id":"O1","name":"🚢 Shipped"}]},"items":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"id":"I2","fieldValueByName":{"name":"Todo"},"content":{"number":2,"title":"Issue 2","repository":{"nameWithOwner":"tailscale/corp"},"timelineItems":{"nodes":[]}}}]}}}}}`
+			resp := `{"data":{"organization":{"projectV2":{"id":"PVT_1","statusField":{"id":"F1","options":[{"id":"O1","name":"🚢 Shipped"}]},"iterationField":{"id":"IF1","configuration":{"iterations":[],"completedIterations":[]}},"items":{"totalCount":2,"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"id":"I2","statusValue":{"name":"Todo"},"iterationValue":{},"content":{"number":2,"title":"Issue 2","state":"OPEN","repository":{"nameWithOwner":"tailscale/corp"},"timelineItems":{"nodes":[]}}}]}}}}}`
 			w.Write([]byte(resp))
 		}
 	}))

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/github-deployed-issue-sync/internal/github"
 	"github.com/github-deployed-issue-sync/internal/prodver"
@@ -13,14 +14,15 @@ import (
 
 // Syncer orchestrates the deployed-issue sync process.
 type Syncer struct {
-	Prodver         prodver.SHAFetcher
-	ProjectQuerier  github.ProjectQuerier
-	AncestorChecker github.AncestorChecker
-	StatusUpdater   github.StatusUpdater
-	Org             string
-	Repo            string
-	DryRun          bool
-	Logger          *slog.Logger
+	Prodver          prodver.SHAFetcher
+	ProjectQuerier   github.ProjectQuerier
+	AncestorChecker  github.AncestorChecker
+	StatusUpdater    github.StatusUpdater
+	IterationUpdater github.IterationUpdater
+	Org              string
+	Repo             string
+	DryRun           bool
+	Logger           *slog.Logger
 }
 
 // Run performs the sync: fetch deployed SHA, check project issues, update shipped status.
@@ -138,7 +140,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 		s.Logger.Info("marked as shipped", "issue", item.Issue.Title, "number", item.Issue.Number, "url", issueURL)
 	}
 
-	s.Logger.Info("sync complete",
+	s.Logger.Info("shipping sync complete",
 		"updated", updated,
 		"skipped", skipped,
 		"skip_no_issue", noIssue,
@@ -150,5 +152,131 @@ func (s *Syncer) Run(ctx context.Context) error {
 		"skip_not_deployed", notDeployed,
 		"errors", len(errs),
 	)
+
+	// Second pass: assign iterations to Done/Shipped items missing one.
+	iterErrs := s.assignIterations(ctx, projectData)
+	errs = append(errs, iterErrs...)
+
 	return errors.Join(errs...)
+}
+
+// assignIterations sets the iteration field for Done/Shipped items that don't have one,
+// based on the issue's closedAt date.
+func (s *Syncer) assignIterations(ctx context.Context, pd *github.ProjectData) []error {
+	if pd.IterationFieldID == "" {
+		s.Logger.Warn("no iteration field found in project, skipping iteration assignment")
+		return nil
+	}
+	if len(pd.Iterations) == 0 {
+		s.Logger.Warn("no iterations configured in project, skipping iteration assignment")
+		return nil
+	}
+
+	var iterUpdated, iterSkipped int
+	var noIssueCnt, notDoneShipped, hasIteration, noClosedAt, noMatchingIter int
+	var errs []error
+
+	for _, item := range pd.Items {
+		if item.Issue == nil {
+			noIssueCnt++
+			iterSkipped++
+			continue
+		}
+
+		status := strings.Join(strings.Fields(item.CurrentStatus), " ")
+		if status != "🚀 Done" && status != "🚢 Shipped" {
+			notDoneShipped++
+			iterSkipped++
+			continue
+		}
+
+		if item.CurrentIterationID != "" {
+			hasIteration++
+			iterSkipped++
+			continue
+		}
+
+		if item.Issue.ClosedAt == "" {
+			noClosedAt++
+			iterSkipped++
+			continue
+		}
+
+		closedAt, err := time.Parse(time.RFC3339, item.Issue.ClosedAt)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("issue #%d: parsing closedAt %q: %w", item.Issue.Number, item.Issue.ClosedAt, err))
+			continue
+		}
+
+		iter := findIteration(pd.Iterations, closedAt)
+		if iter == nil {
+			noMatchingIter++
+			iterSkipped++
+			continue
+		}
+
+		if s.DryRun {
+			s.Logger.Info("would set iteration (dry-run)",
+				"issue", item.Issue.Title, "number", item.Issue.Number,
+				"iteration", iter.Title, "closedAt", item.Issue.ClosedAt)
+			iterUpdated++
+			continue
+		}
+
+		if err := s.IterationUpdater.UpdateItemIteration(ctx, pd.ProjectID, item.ItemID, pd.IterationFieldID, iter.ID); err != nil {
+			errs = append(errs, fmt.Errorf("issue #%d: set iteration: %w", item.Issue.Number, err))
+			continue
+		}
+
+		iterUpdated++
+		s.Logger.Info("set iteration", "issue", item.Issue.Title, "number", item.Issue.Number, "iteration", iter.Title)
+	}
+
+	s.Logger.Info("iteration sync complete",
+		"updated", iterUpdated,
+		"skipped", iterSkipped,
+		"skip_no_issue", noIssueCnt,
+		"skip_not_done_or_shipped", notDoneShipped,
+		"skip_has_iteration", hasIteration,
+		"skip_no_closed_at", noClosedAt,
+		"skip_no_matching_iteration", noMatchingIter,
+		"errors", len(errs),
+	)
+
+	return errs
+}
+
+// findIteration returns the iteration whose date range contains the given time.
+// If the date falls in a gap between iterations, it returns the most recently
+// ended iteration before the close date.
+func findIteration(iterations []github.Iteration, closedAt time.Time) *github.Iteration {
+	closedDate := closedAt.UTC().Truncate(24 * time.Hour)
+
+	// First pass: exact match.
+	for i := range iterations {
+		start, err := time.Parse("2006-01-02", iterations[i].StartDate)
+		if err != nil {
+			continue
+		}
+		end := start.AddDate(0, 0, iterations[i].Duration)
+		if !closedDate.Before(start) && closedDate.Before(end) {
+			return &iterations[i]
+		}
+	}
+
+	// Second pass: fall back to the most recently ended iteration before closedDate.
+	var best *github.Iteration
+	var bestEnd time.Time
+	for i := range iterations {
+		start, err := time.Parse("2006-01-02", iterations[i].StartDate)
+		if err != nil {
+			continue
+		}
+		end := start.AddDate(0, 0, iterations[i].Duration)
+		if !end.After(closedDate) && (best == nil || end.After(bestEnd)) {
+			best = &iterations[i]
+			bestEnd = end
+		}
+	}
+	return best
 }

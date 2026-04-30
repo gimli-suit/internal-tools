@@ -70,6 +70,10 @@ func checkInstallationAuth(ctx context.Context, httpClient *http.Client, token s
 			"Direct repo issues (tailscale/corp)",
 			fmt.Sprintf(`{"query":"query { repository(owner: \"%s\", name: \"%s\") { issues(first: 3, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number title } } } }"}`, cfg.GitHubOrg, cfg.GitHubRepo),
 		},
+		{
+			"Iteration field configuration",
+			fmt.Sprintf(`{"query":"query { organization(login: \"%s\") { projectV2(number: %d) { field(name: \"Iteration\") { ... on ProjectV2IterationField { id configuration { iterations { title startDate duration } completedIterations { title startDate duration } } } } } } }"}`, cfg.GitHubOrg, cfg.ProjectNumber),
+		},
 	}
 
 	for _, q := range queries {
@@ -141,14 +145,15 @@ func main() {
 	}
 
 	syncer := &sync.Syncer{
-		Prodver:         prodverClient,
-		ProjectQuerier:  ghClient,
-		AncestorChecker: ghClient,
-		StatusUpdater:   ghClient,
-		Org:             cfg.GitHubOrg,
-		Repo:            cfg.GitHubRepo,
-		DryRun:          *dryRun,
-		Logger:          slog.Default(),
+		Prodver:          prodverClient,
+		ProjectQuerier:   ghClient,
+		AncestorChecker:  ghClient,
+		StatusUpdater:    ghClient,
+		IterationUpdater: ghClient,
+		Org:              cfg.GitHubOrg,
+		Repo:             cfg.GitHubRepo,
+		DryRun:           *dryRun,
+		Logger:           slog.Default(),
 	}
 
 	if err := syncer.Run(ctx); err != nil {
