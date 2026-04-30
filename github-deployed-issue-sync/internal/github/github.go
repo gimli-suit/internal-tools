@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 )
 
 // ProjectQuerier fetches project items from a GitHub Project V2.
@@ -29,6 +31,7 @@ type ProjectData struct {
 	ProjectID       string
 	StatusFieldID   string
 	ShippedOptionID string
+	StatusOptions   []string
 	Items           []ProjectItem
 }
 
@@ -43,6 +46,7 @@ type ProjectItem struct {
 type Issue struct {
 	Number     int
 	Title      string
+	Closed     bool
 	Repository string // "owner/repo"
 	ClosingPRs []PullRequest
 }
@@ -63,9 +67,17 @@ type Client struct {
 	RestBaseURL   string
 	Org           string
 	ProjectNumber int
+
+	ancestorCache map[string]bool // cache for IsAncestor results, keyed by commitSHA
+}
+
+func (c *Client) logWarning(msg string) {
+	slog.Warn(msg)
 }
 
 // graphqlRequest sends a GraphQL query and decodes the response.
+// If the response contains both data and errors (partial success),
+// the data is decoded and errors are returned separately as warnings.
 func (c *Client) graphqlRequest(ctx context.Context, query string, variables map[string]any, result any) error {
 	body := map[string]any{
 		"query":     query,
@@ -107,15 +119,28 @@ func (c *Client) graphqlRequest(ctx context.Context, query string, variables map
 	if err := json.Unmarshal(respBody, &gqlResp); err != nil {
 		return fmt.Errorf("decoding graphql response: %w", err)
 	}
-	if len(gqlResp.Errors) > 0 {
+
+	hasData := len(gqlResp.Data) > 0 && string(gqlResp.Data) != "null"
+
+	// If there are errors but no data, fail hard.
+	if len(gqlResp.Errors) > 0 && !hasData {
 		return fmt.Errorf("graphql error: %s", gqlResp.Errors[0].Message)
 	}
 
-	if result != nil {
+	// If there is data, decode it. Errors alongside data are partial
+	// failures (e.g. inaccessible issues in a project) — log and continue.
+	if result != nil && hasData {
 		if err := json.Unmarshal(gqlResp.Data, result); err != nil {
 			return fmt.Errorf("decoding graphql data: %w", err)
 		}
 	}
+
+	if len(gqlResp.Errors) > 0 {
+		for _, e := range gqlResp.Errors {
+			c.logWarning("graphql partial error (some items may be inaccessible): " + e.Message)
+		}
+	}
+
 	return nil
 }
 
@@ -135,6 +160,7 @@ query($org: String!, $number: Int!, $cursor: String) {
         }
       }
       items(first: 100, after: $cursor) {
+        totalCount
         pageInfo {
           hasNextPage
           endCursor
@@ -150,18 +176,41 @@ query($org: String!, $number: Int!, $cursor: String) {
             ... on Issue {
               number
               title
+              state
               repository {
                 nameWithOwner
               }
-              closingPullRequestsReferences(first: 50) {
+              timelineItems(itemTypes: [CROSS_REFERENCED_EVENT, CONNECTED_EVENT], first: 50) {
                 nodes {
-                  number
-                  merged
-                  mergeCommit {
-                    oid
+                  __typename
+                  ... on CrossReferencedEvent {
+                    willCloseTarget
+                    source {
+                      ... on PullRequest {
+                        number
+                        merged
+                        mergeCommit {
+                          oid
+                        }
+                        repository {
+                          nameWithOwner
+                        }
+                      }
+                    }
                   }
-                  repository {
-                    nameWithOwner
+                  ... on ConnectedEvent {
+                    subject {
+                      ... on PullRequest {
+                        number
+                        merged
+                        mergeCommit {
+                          oid
+                        }
+                        repository {
+                          nameWithOwner
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -187,7 +236,8 @@ type projectQueryResponse struct {
 				} `json:"options"`
 			} `json:"field"`
 			Items struct {
-				PageInfo struct {
+				TotalCount int `json:"totalCount"`
+				PageInfo   struct {
 					HasNextPage bool   `json:"hasNextPage"`
 					EndCursor   string `json:"endCursor"`
 				} `json:"pageInfo"`
@@ -205,24 +255,41 @@ type projectItemNode struct {
 	Content struct {
 		Number     int    `json:"number"`
 		Title      string `json:"title"`
+		State      string `json:"state"`
 		Repository *struct {
 			NameWithOwner string `json:"nameWithOwner"`
 		} `json:"repository"`
-		ClosingPullRequestsReferences *struct {
-			Nodes []prNode `json:"nodes"`
-		} `json:"closingPullRequestsReferences"`
+		TimelineItems *struct {
+			Nodes []timelineEventNode `json:"nodes"`
+		} `json:"timelineItems"`
 	} `json:"content"`
 }
 
-type prNode struct {
-	Number      int  `json:"number"`
-	Merged      bool `json:"merged"`
-	MergeCommit *struct {
-		OID string `json:"oid"`
-	} `json:"mergeCommit"`
-	Repository struct {
-		NameWithOwner string `json:"nameWithOwner"`
-	} `json:"repository"`
+type timelineEventNode struct {
+	Typename string `json:"__typename"`
+	// CrossReferencedEvent fields
+	WillCloseTarget bool `json:"willCloseTarget"`
+	Source          struct {
+		Number      int  `json:"number"`
+		Merged      bool `json:"merged"`
+		MergeCommit *struct {
+			OID string `json:"oid"`
+		} `json:"mergeCommit"`
+		Repository *struct {
+			NameWithOwner string `json:"nameWithOwner"`
+		} `json:"repository"`
+	} `json:"source"`
+	// ConnectedEvent fields
+	Subject struct {
+		Number      int  `json:"number"`
+		Merged      bool `json:"merged"`
+		MergeCommit *struct {
+			OID string `json:"oid"`
+		} `json:"mergeCommit"`
+		Repository *struct {
+			NameWithOwner string `json:"nameWithOwner"`
+		} `json:"repository"`
+	} `json:"subject"`
 }
 
 // GetProjectItems fetches all items from the configured project.
@@ -246,14 +313,19 @@ func (c *Client) GetProjectItems(ctx context.Context) (*ProjectData, error) {
 
 		proj := resp.Organization.ProjectV2
 
+			if pd.ProjectID == "" {
+				slog.Info("project total items", "total", proj.Items.TotalCount)
+			}
+
 		// Set project metadata on first page.
 		if pd.ProjectID == "" {
 			pd.ProjectID = proj.ID
 			pd.StatusFieldID = proj.Field.ID
 			for _, opt := range proj.Field.Options {
-				if opt.Name == "🚢 Shipped" {
+				pd.StatusOptions = append(pd.StatusOptions, opt.Name)
+				normalized := strings.Join(strings.Fields(opt.Name), " ")
+				if normalized == "🚢 Shipped" {
 					pd.ShippedOptionID = opt.ID
-					break
 				}
 			}
 		}
@@ -269,17 +341,53 @@ func (c *Client) GetProjectItems(ctx context.Context) (*ProjectData, error) {
 				issue := &Issue{
 					Number:     node.Content.Number,
 					Title:      node.Content.Title,
+					Closed:     node.Content.State == "CLOSED",
 					Repository: node.Content.Repository.NameWithOwner,
 				}
-				if refs := node.Content.ClosingPullRequestsReferences; refs != nil {
-					for _, pr := range refs.Nodes {
-						p := PullRequest{
-							Number:     pr.Number,
-							Merged:     pr.Merged,
-							Repository: pr.Repository.NameWithOwner,
+				if timeline := node.Content.TimelineItems; timeline != nil {
+					seen := make(map[int]bool)
+					for _, event := range timeline.Nodes {
+						var prNum int
+						var prMerged bool
+						var prCommit *struct{ OID string `json:"oid"` }
+						var prRepo *struct{ NameWithOwner string `json:"nameWithOwner"` }
+
+						switch event.Typename {
+						case "CrossReferencedEvent":
+							// Include merged cross-referenced PRs even without
+							// willCloseTarget, since many teams link PRs to issues
+							// without using "Fixes/Closes" keywords.
+							if !event.Source.Merged {
+								continue
+							}
+							prNum = event.Source.Number
+							prMerged = event.Source.Merged
+							prCommit = event.Source.MergeCommit
+							prRepo = event.Source.Repository
+						case "ConnectedEvent":
+							prNum = event.Subject.Number
+							prMerged = event.Subject.Merged
+							prCommit = event.Subject.MergeCommit
+							prRepo = event.Subject.Repository
+						default:
+							continue
 						}
-						if pr.MergeCommit != nil {
-							p.MergeCommit = pr.MergeCommit.OID
+
+						if prRepo == nil || prNum == 0 {
+							continue
+						}
+						if seen[prNum] {
+							continue
+						}
+						seen[prNum] = true
+
+						p := PullRequest{
+							Number:     prNum,
+							Merged:     prMerged,
+							Repository: prRepo.NameWithOwner,
+						}
+						if prCommit != nil {
+							p.MergeCommit = prCommit.OID
 						}
 						issue.ClosingPRs = append(issue.ClosingPRs, p)
 					}
@@ -299,10 +407,18 @@ func (c *Client) GetProjectItems(ctx context.Context) (*ProjectData, error) {
 	return pd, nil
 }
 
-// IsAncestor checks if commitSHA is an ancestor of deployedSHA using
-// the GitHub compare API.
+// IsAncestor checks if commitSHA is included in the history up to deployedSHA
+// using the GitHub compare API. The comparison is done as deployedSHA...commitSHA
+// which works correctly with squash-merged PRs. Results are cached by commitSHA.
 func (c *Client) IsAncestor(ctx context.Context, owner, repo, commitSHA, deployedSHA string) (bool, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/compare/%s...%s", c.RestBaseURL, owner, repo, commitSHA, deployedSHA)
+	if c.ancestorCache == nil {
+		c.ancestorCache = make(map[string]bool)
+	}
+	if result, ok := c.ancestorCache[commitSHA]; ok {
+		return result, nil
+	}
+
+	url := fmt.Sprintf("%s/repos/%s/%s/compare/%s...%s", c.RestBaseURL, owner, repo, deployedSHA, commitSHA)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -332,9 +448,12 @@ func (c *Client) IsAncestor(ctx context.Context, owner, repo, commitSHA, deploye
 		return false, fmt.Errorf("decoding compare response: %w", err)
 	}
 
-	// "behind" = commitSHA is behind deployedSHA (ancestor)
+	// With deployedSHA...commitSHA:
+	// "behind" = commitSHA is behind deployedSHA (deployed)
 	// "identical" = same commit
-	return result.Status == "behind" || result.Status == "identical", nil
+	isAnc := result.Status == "behind" || result.Status == "identical"
+	c.ancestorCache[commitSHA] = isAnc
+	return isAnc, nil
 }
 
 // GraphQL mutation for updating a project item's field value.

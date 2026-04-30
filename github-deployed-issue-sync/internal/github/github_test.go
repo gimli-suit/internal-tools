@@ -28,7 +28,8 @@ func TestGetProjectItems(t *testing.T) {
 					} `json:"options"`
 				} `json:"field"`
 				Items struct {
-					PageInfo struct {
+					TotalCount int `json:"totalCount"`
+					PageInfo   struct {
 						HasNextPage bool   `json:"hasNextPage"`
 						EndCursor   string `json:"endCursor"`
 					} `json:"pageInfo"`
@@ -46,7 +47,8 @@ func TestGetProjectItems(t *testing.T) {
 					} `json:"options"`
 				} `json:"field"`
 				Items struct {
-					PageInfo struct {
+					TotalCount int `json:"totalCount"`
+					PageInfo   struct {
 						HasNextPage bool   `json:"hasNextPage"`
 						EndCursor   string `json:"endCursor"`
 					} `json:"pageInfo"`
@@ -71,12 +73,14 @@ func TestGetProjectItems(t *testing.T) {
 					},
 				},
 				Items: struct {
-					PageInfo struct {
+					TotalCount int `json:"totalCount"`
+					PageInfo   struct {
 						HasNextPage bool   `json:"hasNextPage"`
 						EndCursor   string `json:"endCursor"`
 					} `json:"pageInfo"`
 					Nodes []projectItemNode `json:"nodes"`
 				}{
+					TotalCount: 1,
 					Nodes: []projectItemNode{
 						{
 							ID: "PVTI_item1",
@@ -86,31 +90,46 @@ func TestGetProjectItems(t *testing.T) {
 							Content: struct {
 								Number     int    `json:"number"`
 								Title      string `json:"title"`
+								State      string `json:"state"`
 								Repository *struct {
 									NameWithOwner string `json:"nameWithOwner"`
 								} `json:"repository"`
-								ClosingPullRequestsReferences *struct {
-									Nodes []prNode `json:"nodes"`
-								} `json:"closingPullRequestsReferences"`
+								TimelineItems *struct {
+									Nodes []timelineEventNode `json:"nodes"`
+								} `json:"timelineItems"`
 							}{
 								Number: 42,
 								Title:  "Fix the thing",
+								State:  "CLOSED",
 								Repository: &struct {
 									NameWithOwner string `json:"nameWithOwner"`
 								}{NameWithOwner: "tailscale/corp"},
-								ClosingPullRequestsReferences: &struct {
-									Nodes []prNode `json:"nodes"`
+								TimelineItems: &struct {
+									Nodes []timelineEventNode `json:"nodes"`
 								}{
-									Nodes: []prNode{
+									Nodes: []timelineEventNode{
 										{
-											Number: 100,
-											Merged: true,
-											MergeCommit: &struct {
-												OID string `json:"oid"`
-											}{OID: "abc123"},
-											Repository: struct {
-												NameWithOwner string `json:"nameWithOwner"`
-											}{NameWithOwner: "tailscale/corp"},
+											Typename:        "CrossReferencedEvent",
+											WillCloseTarget: true,
+											Source: struct {
+												Number      int  `json:"number"`
+												Merged      bool `json:"merged"`
+												MergeCommit *struct {
+													OID string `json:"oid"`
+												} `json:"mergeCommit"`
+												Repository *struct {
+													NameWithOwner string `json:"nameWithOwner"`
+												} `json:"repository"`
+											}{
+												Number: 100,
+												Merged: true,
+												MergeCommit: &struct {
+													OID string `json:"oid"`
+												}{OID: "abc123"},
+												Repository: &struct {
+													NameWithOwner string `json:"nameWithOwner"`
+												}{NameWithOwner: "tailscale/corp"},
+											},
 										},
 									},
 								},
@@ -199,14 +218,14 @@ func TestGetProjectItems_Pagination(t *testing.T) {
 
 		if page == 1 {
 			// First page — has next page.
-			resp := `{"data":{"organization":{"projectV2":{"id":"PVT_1","field":{"id":"F1","options":[{"id":"O1","name":"🚢 Shipped"}]},"items":{"pageInfo":{"hasNextPage":true,"endCursor":"cursor1"},"nodes":[{"id":"I1","fieldValueByName":{"name":"Todo"},"content":{"number":1,"title":"Issue 1","repository":{"nameWithOwner":"tailscale/corp"},"closingPullRequestsReferences":{"nodes":[]}}}]}}}}}`
+			resp := `{"data":{"organization":{"projectV2":{"id":"PVT_1","field":{"id":"F1","options":[{"id":"O1","name":"🚢 Shipped"}]},"items":{"pageInfo":{"hasNextPage":true,"endCursor":"cursor1"},"nodes":[{"id":"I1","fieldValueByName":{"name":"Todo"},"content":{"number":1,"title":"Issue 1","repository":{"nameWithOwner":"tailscale/corp"},"timelineItems":{"nodes":[]}}}]}}}}}`
 			w.Write([]byte(resp))
 		} else {
 			// Verify cursor was passed.
 			if !strings.Contains(string(body), "cursor1") {
 				t.Error("expected cursor1 in second request")
 			}
-			resp := `{"data":{"organization":{"projectV2":{"id":"PVT_1","field":{"id":"F1","options":[{"id":"O1","name":"🚢 Shipped"}]},"items":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"id":"I2","fieldValueByName":{"name":"Todo"},"content":{"number":2,"title":"Issue 2","repository":{"nameWithOwner":"tailscale/corp"},"closingPullRequestsReferences":{"nodes":[]}}}]}}}}}`
+			resp := `{"data":{"organization":{"projectV2":{"id":"PVT_1","field":{"id":"F1","options":[{"id":"O1","name":"🚢 Shipped"}]},"items":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"id":"I2","fieldValueByName":{"name":"Todo"},"content":{"number":2,"title":"Issue 2","repository":{"nameWithOwner":"tailscale/corp"},"timelineItems":{"nodes":[]}}}]}}}}}`
 			w.Write([]byte(resp))
 		}
 	}))
@@ -234,7 +253,7 @@ func TestGetProjectItems_Pagination(t *testing.T) {
 
 func TestIsAncestor_Behind(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/tailscale/corp/compare/abc...def" {
+		if r.URL.Path != "/repos/tailscale/corp/compare/def...abc" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Write([]byte(`{"status":"behind"}`))

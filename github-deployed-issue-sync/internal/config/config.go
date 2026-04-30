@@ -73,11 +73,13 @@ func Load() (*Config, error) {
 }
 
 // loadPrivateKey reads the GitHub App private key from GITHUB_APP_PRIVATE_KEY
-// (raw PEM content) or GITHUB_APP_PRIVATE_KEY_PATH (file path). Direct content
-// takes precedence if both are set.
+// (raw PEM content, with literal "\n" escape sequences supported) or
+// GITHUB_APP_PRIVATE_KEY_PATH (file path). Direct content takes precedence
+// if both are set.
 func loadPrivateKey() ([]byte, error) {
 	if key := os.Getenv("GITHUB_APP_PRIVATE_KEY"); key != "" {
-		return []byte(key), nil
+		// Support PEM keys pasted with literal \n instead of real newlines.
+		return []byte(strings.ReplaceAll(key, `\n`, "\n")), nil
 	}
 	if path := os.Getenv("GITHUB_APP_PRIVATE_KEY_PATH"); path != "" {
 		data, err := os.ReadFile(path)

@@ -2,6 +2,7 @@ package prodver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,7 +44,32 @@ func (c *Client) FetchDeployedSHA(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("reading response: %w", err)
 	}
 
-	return parseSHA(string(body), c.ShardName)
+	content := string(body)
+
+	// Try JSON first (single-server endpoint returns JSON).
+	if sha, err := parseJSON(content); err == nil {
+		return sha, nil
+	}
+
+	// Fall back to HTML table parsing (multi-server page).
+	return parseSHA(content, c.ShardName)
+}
+
+// prodverEntry represents the JSON response from a single-server prodver endpoint.
+type prodverEntry struct {
+	CorpHash string `json:"CorpHash"`
+}
+
+// parseJSON tries to parse the response as a single prodver JSON entry.
+func parseJSON(content string) (string, error) {
+	var entry prodverEntry
+	if err := json.Unmarshal([]byte(content), &entry); err != nil {
+		return "", err
+	}
+	if entry.CorpHash == "" {
+		return "", fmt.Errorf("empty CorpHash in JSON response")
+	}
+	return entry.CorpHash, nil
 }
 
 const corpCommitsPrefix = "tailscale/corp/commits/"
@@ -52,6 +78,10 @@ const corpCommitsPrefix = "tailscale/corp/commits/"
 func parseSHA(html, shardName string) (string, error) {
 	rows := strings.Split(html, "<tr")
 	for _, row := range rows {
+		// Only consider actual table data rows (skip nav links and headers).
+		if !strings.Contains(row, "<td class=name>") {
+			continue
+		}
 		// Check if this row contains the shard name.
 		// The shard name appears in a <td> like: <td class=name>...<a ...>shard1</a></td>
 		// Match on ">shardName</a>" to avoid partial matches (e.g., "shard1" matching "shard10").

@@ -14,10 +14,10 @@ import (
 
 // GetInstallationToken generates a JWT from the GitHub App private key,
 // then exchanges it for an installation access token.
-func GetInstallationToken(ctx context.Context, httpClient *http.Client, baseURL string, appID, installationID int64, privateKeyPEM []byte) (string, error) {
+func GetInstallationToken(ctx context.Context, httpClient *http.Client, baseURL string, appID, installationID int64, privateKeyPEM []byte) (string, map[string]string, error) {
 	key, err := jwt.ParseRSAPrivateKeyFromPEM(privateKeyPEM)
 	if err != nil {
-		return "", fmt.Errorf("parsing private key: %w", err)
+		return "", nil, fmt.Errorf("parsing private key: %w", err)
 	}
 
 	now := time.Now()
@@ -29,41 +29,42 @@ func GetInstallationToken(ctx context.Context, httpClient *http.Client, baseURL 
 
 	signed, err := token.SignedString(key)
 	if err != nil {
-		return "", fmt.Errorf("signing JWT: %w", err)
+		return "", nil, fmt.Errorf("signing JWT: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", baseURL, installationID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
-		return "", fmt.Errorf("creating token request: %w", err)
+		return "", nil, fmt.Errorf("creating token request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+signed)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("requesting installation token: %w", err)
+		return "", nil, fmt.Errorf("requesting installation token: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("reading token response: %w", err)
+		return "", nil, fmt.Errorf("reading token response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("token endpoint returned status %d: %s", resp.StatusCode, body)
+		return "", nil, fmt.Errorf("token endpoint returned status %d: %s", resp.StatusCode, body)
 	}
 
 	var result struct {
-		Token string `json:"token"`
+		Token       string            `json:"token"`
+		Permissions map[string]string `json:"permissions"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("decoding token response: %w", err)
+		return "", nil, fmt.Errorf("decoding token response: %w", err)
 	}
 	if result.Token == "" {
-		return "", fmt.Errorf("token endpoint returned empty token")
+		return "", nil, fmt.Errorf("token endpoint returned empty token")
 	}
 
-	return result.Token, nil
+	return result.Token, result.Permissions, nil
 }

@@ -84,7 +84,7 @@ func TestGetInstallationToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	token, err := GetInstallationToken(context.Background(), server.Client(), server.URL, appID, installationID, pemBytes)
+	token, _, err := GetInstallationToken(context.Background(), server.Client(), server.URL, appID, installationID, pemBytes)
 	if err != nil {
 		t.Fatalf("GetInstallationToken() error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestGetInstallationToken(t *testing.T) {
 }
 
 func TestGetInstallationTokenInvalidPEM(t *testing.T) {
-	_, err := GetInstallationToken(context.Background(), http.DefaultClient, "https://unused", 1, 1, []byte("not a key"))
+	_, _, err := GetInstallationToken(context.Background(), http.DefaultClient, "https://unused", 1, 1, []byte("not a key"))
 	if err == nil {
 		t.Fatal("expected error for invalid PEM")
 	}
@@ -131,7 +131,7 @@ func TestGetInstallationTokenAPIError(t *testing.T) {
 			}))
 			defer server.Close()
 
-			_, err := GetInstallationToken(context.Background(), server.Client(), server.URL, 1, 1, pemBytes)
+			_, _, err := GetInstallationToken(context.Background(), server.Client(), server.URL, 1, 1, pemBytes)
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -151,7 +151,7 @@ func TestGetInstallationTokenEmptyToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := GetInstallationToken(context.Background(), server.Client(), server.URL, 1, 1, pemBytes)
+	_, _, err := GetInstallationToken(context.Background(), server.Client(), server.URL, 1, 1, pemBytes)
 	if err == nil {
 		t.Fatal("expected error for empty token")
 	}

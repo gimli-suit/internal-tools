@@ -8,6 +8,9 @@ import (
 )
 
 const sampleHTML = `<html><body>
+[<a href="/">all</a>]
+[<a href="/control">control</a>]
+[<a href="/trunkd">trunkd</a>]
 <table cellpadding=5 border=1><tr>
 <th>Server</th><th>Version</th><th>Process Start</th><th>Connected</th><th>Binary</th>
 </tr>
@@ -34,6 +37,28 @@ func TestFetchDeployedSHA(t *testing.T) {
 	}
 	if sha != "abc123def" {
 		t.Errorf("got SHA %q, want %q", sha, "abc123def")
+	}
+}
+
+func TestFetchDeployedSHA_ControlShard(t *testing.T) {
+	// "control" appears in both the nav links and the table — should only match the table row.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(sampleHTML))
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		HTTPClient: srv.Client(),
+		URL:        srv.URL,
+		ShardName:  "control",
+	}
+
+	sha, err := c.FetchDeployedSHA(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sha != "6337698d2" {
+		t.Errorf("got SHA %q, want %q", sha, "6337698d2")
 	}
 }
 
@@ -92,6 +117,28 @@ func TestFetchDeployedSHA_HTTPError(t *testing.T) {
 	_, err := c.FetchDeployedSHA(context.Background())
 	if err == nil {
 		t.Fatal("expected error for HTTP 500")
+	}
+}
+
+func TestFetchDeployedSHA_JSONResponse(t *testing.T) {
+	jsonBody := `{"Name":"control","BinPath":"corp/cmd/tailcontrol","URL":"http://control.corp.ts.net:8383/debug/vars","Start":"2026-04-29T20:24:34Z","Version":"1.97.300-tbb91bb842-g09854b937","ShardMapHash":"109fbf7","ConnectedSince":"2026-04-29T20:24:42Z","OSSHash":"bb91bb842","CorpHash":"09854b937","DashboardIDs":[40,208],"AnnotationTags":["job:control"],"SuppressSlackNotifications":false}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(jsonBody))
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		HTTPClient: srv.Client(),
+		URL:        srv.URL,
+		ShardName:  "control",
+	}
+
+	sha, err := c.FetchDeployedSHA(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sha != "09854b937" {
+		t.Errorf("got SHA %q, want %q", sha, "09854b937")
 	}
 }
 

@@ -69,6 +69,7 @@ func TestRun_HappyPath(t *testing.T) {
 			Issue: &github.Issue{
 				Number:     10,
 				Title:      "Fix bug",
+				Closed:     true,
 				Repository: "tailscale/corp",
 				ClosingPRs: []github.PullRequest{
 					{Number: 100, Merged: true, MergeCommit: "aaa", Repository: "tailscale/corp"},
@@ -105,6 +106,7 @@ func TestRun_AlreadyShipped(t *testing.T) {
 			Issue: &github.Issue{
 				Number:     10,
 				Title:      "Already shipped",
+				Closed:     true,
 				Repository: "tailscale/corp",
 				ClosingPRs: []github.PullRequest{
 					{Number: 100, Merged: true, MergeCommit: "aaa", Repository: "tailscale/corp"},
@@ -141,6 +143,7 @@ func TestRun_UnmergedPR(t *testing.T) {
 			Issue: &github.Issue{
 				Number:     10,
 				Title:      "Has unmerged PR",
+				Closed:     true,
 				Repository: "tailscale/corp",
 				ClosingPRs: []github.PullRequest{
 					{Number: 100, Merged: true, MergeCommit: "aaa", Repository: "tailscale/corp"},
@@ -178,6 +181,7 @@ func TestRun_NoClosingPRs(t *testing.T) {
 			Issue: &github.Issue{
 				Number:     10,
 				Title:      "No PRs",
+				Closed:     true,
 				Repository: "tailscale/corp",
 			},
 		},
@@ -211,6 +215,7 @@ func TestRun_NotYetDeployed(t *testing.T) {
 			Issue: &github.Issue{
 				Number:     10,
 				Title:      "Not deployed yet",
+				Closed:     true,
 				Repository: "tailscale/corp",
 				ClosingPRs: []github.PullRequest{
 					{Number: 100, Merged: true, MergeCommit: "aaa", Repository: "tailscale/corp"},
@@ -247,6 +252,7 @@ func TestRun_OnlyNonCorpPRs(t *testing.T) {
 			Issue: &github.Issue{
 				Number:     10,
 				Title:      "Only tailscale/tailscale PRs",
+				Closed:     true,
 				Repository: "tailscale/corp",
 				ClosingPRs: []github.PullRequest{
 					{Number: 100, Merged: true, MergeCommit: "aaa", Repository: "tailscale/tailscale"},
@@ -308,6 +314,7 @@ func TestRun_UpdateError(t *testing.T) {
 			Issue: &github.Issue{
 				Number:     10,
 				Title:      "Fix bug",
+				Closed:     true,
 				Repository: "tailscale/corp",
 				ClosingPRs: []github.PullRequest{
 					{Number: 100, Merged: true, MergeCommit: "aaa", Repository: "tailscale/corp"},
