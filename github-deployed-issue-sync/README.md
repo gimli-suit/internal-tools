@@ -5,6 +5,45 @@ Automatically updates GitHub Project V2 issues when their linked PRs have been d
 1. **Marks issues as shipped** — Sets the status to "Shipped" when all linked PRs are deployed
 2. **Assigns iterations** — Sets the iteration field based on when the issue was closed
 
+## Project board requirements
+
+The GitHub Project V2 board must be set up with the following fields and values for the app to work correctly.
+
+### Status field
+
+The project must have a **Status** field (single select) with at least the following options:
+
+| Option | Purpose |
+|--------|---------|
+| **Done** | Issues considered complete. The app checks these for iteration assignment. |
+| **Shipped** | Issues whose linked PRs have been deployed. The app sets this status automatically. |
+
+The "Shipped" option name is matched with normalized whitespace, so "🚢 Shipped" or "🚢  Shipped" both work. Other status values (Triage, Backlog, In Progress, etc.) are ignored by the app — you can name them however you like.
+
+### Iteration field
+
+The project must have an **Iteration** field named exactly **"Iteration"**. The app reads the configured iterations (both active and completed) and matches issues to them by close date.
+
+- Iterations should ideally cover contiguous date ranges with no gaps
+- If an issue is closed during a gap between iterations, the app assigns it to the most recently ended iteration
+- Issues closed before the earliest iteration will not be assigned an iteration
+
+### Issues
+
+For the app to process an issue, it must meet these criteria:
+
+- **Added to the project board** — only issues on the board are visible to the app
+- **Closed** — open issues are skipped entirely
+- **Has linked PRs** — PRs must be linked via the Development sidebar (ConnectedEvent) or by referencing the issue in a PR description/comment (CrossReferencedEvent). At least one linked PR must be merged and in the target repo.
+- **In the target repo or a repo the app is installed on** — issues from repos the app cannot access will appear as `null` and be skipped
+
+### What the app will NOT do
+
+- Overwrite an existing iteration value — if an issue already has an iteration set, the app leaves it alone
+- Mark open issues as shipped — issues must be closed first
+- Process issues from repos the app isn't installed on — the GitHub App must have access to the repo where the issue lives
+- Close issues — the app only updates the Status and Iteration project fields
+
 ## How it works
 
 ### Shipping status
