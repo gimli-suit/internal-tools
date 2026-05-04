@@ -1,7 +1,10 @@
 {
   "prodver_url": "http://prodver/control",
-  "shard_name": "shard1",
+  "shard_name": "control",
   "github_org": "tailscale",
   "github_repo": "corp",
-  "project_number": 42
+  "projects": [
+    {"project_number": 150, "name": "Product Growth"},
+    {"project_number": 200, "name": "Platform"}
+  ]
 }

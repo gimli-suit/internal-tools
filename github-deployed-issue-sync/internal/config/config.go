@@ -9,6 +9,12 @@ import (
 	"strings"
 )
 
+// ProjectConfig describes a single GitHub Project V2 to sync.
+type ProjectConfig struct {
+	ProjectNumber int    `json:"project_number"`
+	Name          string `json:"name,omitempty"` // optional, for logging
+}
+
 type Config struct {
 	GitHubAppID             int64
 	GitHubAppInstallationID int64
@@ -17,15 +23,16 @@ type Config struct {
 	ShardName               string
 	GitHubOrg               string
 	GitHubRepo              string
-	ProjectNumber           int
+	Projects                []ProjectConfig
 }
 
 type configFile struct {
-	ProdverURL    string `json:"prodver_url"`
-	ShardName     string `json:"shard_name"`
-	GitHubOrg     string `json:"github_org"`
-	GitHubRepo    string `json:"github_repo"`
-	ProjectNumber int    `json:"project_number"`
+	ProdverURL    string          `json:"prodver_url"`
+	ShardName     string          `json:"shard_name"`
+	GitHubOrg     string          `json:"github_org"`
+	GitHubRepo    string          `json:"github_repo"`
+	ProjectNumber int             `json:"project_number"` // backward compat: single project
+	Projects      []ProjectConfig `json:"projects"`       // preferred: multiple projects
 }
 
 // Load reads the GitHub App credentials from .env/environment and settings from config.json.
@@ -60,6 +67,15 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	// Build projects list: prefer "projects" array, fall back to single "project_number".
+	projects := cf.Projects
+	if len(projects) == 0 && cf.ProjectNumber != 0 {
+		projects = []ProjectConfig{{ProjectNumber: cf.ProjectNumber}}
+	}
+	if len(projects) == 0 {
+		return nil, fmt.Errorf("config file must specify at least one project via \"projects\" or \"project_number\"")
+	}
+
 	return &Config{
 		GitHubAppID:             appID,
 		GitHubAppInstallationID: installID,
@@ -68,7 +84,7 @@ func Load() (*Config, error) {
 		ShardName:               cf.ShardName,
 		GitHubOrg:               cf.GitHubOrg,
 		GitHubRepo:              cf.GitHubRepo,
-		ProjectNumber:           cf.ProjectNumber,
+		Projects:                projects,
 	}, nil
 }
 
@@ -114,9 +130,6 @@ func loadConfigFile(path string) (*configFile, error) {
 	}
 	if cf.GitHubRepo == "" {
 		missing = append(missing, "github_repo")
-	}
-	if cf.ProjectNumber == 0 {
-		missing = append(missing, "project_number")
 	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("config file %s missing required fields: %s", path, strings.Join(missing, ", "))

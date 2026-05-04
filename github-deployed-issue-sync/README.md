@@ -131,7 +131,7 @@ GITHUB_APP_PRIVATE_KEY_PATH=/path/to/your-app.private-key.pem
 | `GITHUB_APP_PRIVATE_KEY_PATH` | Path to the `.pem` private key file |
 | `GITHUB_APP_PRIVATE_KEY` | Alternative: raw PEM content with literal `\n` for newlines. Takes precedence over `_PATH`. |
 
-**config.json** — sync target:
+**config.json** — sync targets:
 
 ```json
 {
@@ -139,7 +139,10 @@ GITHUB_APP_PRIVATE_KEY_PATH=/path/to/your-app.private-key.pem
   "shard_name": "control",
   "github_org": "tailscale",
   "github_repo": "corp",
-  "project_number": 150
+  "projects": [
+    {"project_number": 150, "name": "Product Growth"},
+    {"project_number": 200, "name": "Platform"}
+  ]
 }
 ```
 
@@ -149,9 +152,11 @@ GITHUB_APP_PRIVATE_KEY_PATH=/path/to/your-app.private-key.pem
 | `shard_name` | Shard name to read the deployed SHA from (e.g., `control`, `shard1`) |
 | `github_org` | GitHub organization that owns the project |
 | `github_repo` | Repository to check merge commits against |
-| `project_number` | Project V2 number (from the project board URL, e.g., `.../projects/150`) |
+| `projects` | Array of projects to sync. Each entry has `project_number` (required) and `name` (optional, for logging). |
 
-The project board must have a **Status** field (with a "Shipped" option) and an **Iteration** field.
+For backward compatibility, a single `"project_number": 150` field is also accepted instead of the `projects` array.
+
+Each project board is validated before syncing. Projects missing a "Shipped" status option are skipped with a warning. Projects without an "Iteration" field will still have shipping status updated but iteration assignment will be skipped.
 
 ## Usage
 

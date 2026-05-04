@@ -98,8 +98,8 @@ func TestLoadSuccess(t *testing.T) {
 	if cfg.GitHubRepo != "corp" {
 		t.Errorf("got github_repo %q, want %q", cfg.GitHubRepo, "corp")
 	}
-	if cfg.ProjectNumber != 42 {
-		t.Errorf("got project_number %d, want %d", cfg.ProjectNumber, 42)
+	if len(cfg.Projects) != 1 || cfg.Projects[0].ProjectNumber != 42 {
+		t.Errorf("got projects %+v, want [{ProjectNumber:42}]", cfg.Projects)
 	}
 }
 

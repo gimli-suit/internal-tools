@@ -24,7 +24,7 @@ type mockProjectQuerier struct {
 	err  error
 }
 
-func (m *mockProjectQuerier) GetProjectItems(ctx context.Context) (*github.ProjectData, error) {
+func (m *mockProjectQuerier) GetProjectItems(ctx context.Context, projectNumber int) (*github.ProjectData, error) {
 	return m.data, m.err
 }
 
@@ -112,7 +112,7 @@ func TestRun_HappyPath(t *testing.T) {
 		Logger:          slog.Default(),
 	}
 
-	if err := s.Run(context.Background()); err != nil {
+	if err := s.Run(context.Background(), 1, "test"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(updater.updated) != 1 || updater.updated[0] != "I1" {
@@ -150,7 +150,7 @@ func TestRun_AlreadyShipped(t *testing.T) {
 		Logger:          slog.Default(),
 	}
 
-	if err := s.Run(context.Background()); err != nil {
+	if err := s.Run(context.Background(), 1, "test"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(updater.updated) != 0 {
@@ -189,7 +189,7 @@ func TestRun_UnmergedPR(t *testing.T) {
 		Logger:          slog.Default(),
 	}
 
-	if err := s.Run(context.Background()); err != nil {
+	if err := s.Run(context.Background(), 1, "test"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(updater.updated) != 0 {
@@ -224,7 +224,7 @@ func TestRun_NoClosingPRs(t *testing.T) {
 		Logger:          slog.Default(),
 	}
 
-	if err := s.Run(context.Background()); err != nil {
+	if err := s.Run(context.Background(), 1, "test"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(updater.updated) != 0 {
@@ -262,7 +262,7 @@ func TestRun_NotYetDeployed(t *testing.T) {
 		Logger:          slog.Default(),
 	}
 
-	if err := s.Run(context.Background()); err != nil {
+	if err := s.Run(context.Background(), 1, "test"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(updater.updated) != 0 {
@@ -300,7 +300,7 @@ func TestRun_OnlyNonCorpPRs(t *testing.T) {
 		Logger:          slog.Default(),
 	}
 
-	if err := s.Run(context.Background()); err != nil {
+	if err := s.Run(context.Background(), 1, "test"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(updater.updated) != 0 {
@@ -314,7 +314,7 @@ func TestRun_ProdverError(t *testing.T) {
 		Logger:  slog.Default(),
 	}
 
-	err := s.Run(context.Background())
+	err := s.Run(context.Background(), 1, "test")
 	if err == nil {
 		t.Fatal("expected error from prodver failure")
 	}
@@ -327,7 +327,7 @@ func TestRun_ProjectQueryError(t *testing.T) {
 		Logger:         slog.Default(),
 	}
 
-	err := s.Run(context.Background())
+	err := s.Run(context.Background(), 1, "test")
 	if err == nil {
 		t.Fatal("expected error from project query failure")
 	}
@@ -362,7 +362,7 @@ func TestRun_UpdateError(t *testing.T) {
 		Logger:          slog.Default(),
 	}
 
-	err := s.Run(context.Background())
+	err := s.Run(context.Background(), 1, "test")
 	if err == nil {
 		t.Fatal("expected error from update failure")
 	}
@@ -386,7 +386,7 @@ func TestRun_DraftIssueSkipped(t *testing.T) {
 		Logger:          slog.Default(),
 	}
 
-	if err := s.Run(context.Background()); err != nil {
+	if err := s.Run(context.Background(), 1, "test"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(updater.updated) != 0 {
@@ -509,7 +509,7 @@ func TestRun_IterationAssignment(t *testing.T) {
 		Logger:           slog.Default(),
 	}
 
-	if err := s.Run(context.Background()); err != nil {
+	if err := s.Run(context.Background(), 1, "test"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

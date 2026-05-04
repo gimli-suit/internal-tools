@@ -13,7 +13,7 @@ import (
 
 // ProjectQuerier fetches project items from a GitHub Project V2.
 type ProjectQuerier interface {
-	GetProjectItems(ctx context.Context) (*ProjectData, error)
+	GetProjectItems(ctx context.Context, projectNumber int) (*ProjectData, error)
 }
 
 // AncestorChecker checks if a commit is an ancestor of another.
@@ -76,14 +76,13 @@ type PullRequest struct {
 	Repository  string // "owner/repo"
 }
 
-// Client implements ProjectQuerier, AncestorChecker, and StatusUpdater.
+// Client implements ProjectQuerier, AncestorChecker, StatusUpdater, and IterationUpdater.
 type Client struct {
-	HTTPClient    *http.Client
-	Token         string
-	GraphQLURL    string
-	RestBaseURL   string
-	Org           string
-	ProjectNumber int
+	HTTPClient  *http.Client
+	Token       string
+	GraphQLURL  string
+	RestBaseURL string
+	Org         string
 
 	ancestorCache map[string]bool // cache for IsAncestor results, keyed by commitSHA
 }
@@ -355,15 +354,15 @@ type timelineEventNode struct {
 	} `json:"subject"`
 }
 
-// GetProjectItems fetches all items from the configured project.
-func (c *Client) GetProjectItems(ctx context.Context) (*ProjectData, error) {
+// GetProjectItems fetches all items from the given project.
+func (c *Client) GetProjectItems(ctx context.Context, projectNumber int) (*ProjectData, error) {
 	pd := &ProjectData{}
 	var cursor *string
 
 	for {
 		vars := map[string]any{
 			"org":    c.Org,
-			"number": c.ProjectNumber,
+			"number": projectNumber,
 		}
 		if cursor != nil {
 			vars["cursor"] = *cursor

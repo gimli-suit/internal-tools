@@ -53,26 +53,32 @@ func checkInstallationAuth(ctx context.Context, httpClient *http.Client, token s
 		}
 	}
 
-	// Check org project access via GraphQL.
+	// Check org project access via GraphQL using the first configured project.
+	projNum := cfg.Projects[0].ProjectNumber
+	fmt.Printf("\n=== Configured Projects ===\n")
+	for _, p := range cfg.Projects {
+		name := p.Name
+		if name == "" {
+			name = fmt.Sprintf("(unnamed)")
+		}
+		fmt.Printf("  - #%d %s\n", p.ProjectNumber, name)
+	}
+
 	queries := []struct {
 		name  string
 		query string
 	}{
 		{
-			"Project Access",
-			fmt.Sprintf(`{"query":"query { organization(login: \"%s\") { projectV2(number: %d) { id title } } }"}`, cfg.GitHubOrg, cfg.ProjectNumber),
-		},
-		{
-			"Project Items (first 20, no timeline)",
-			fmt.Sprintf(`{"query":"query { organization(login: \"%s\") { projectV2(number: %d) { items(first: 20) { nodes { id content { ... on Issue { number title repository { nameWithOwner } } } } } } } }"}`, cfg.GitHubOrg, cfg.ProjectNumber),
+			fmt.Sprintf("Project Access (#%d)", projNum),
+			fmt.Sprintf(`{"query":"query { organization(login: \"%s\") { projectV2(number: %d) { id title } } }"}`, cfg.GitHubOrg, projNum),
 		},
 		{
 			"Direct repo issues (tailscale/corp)",
 			fmt.Sprintf(`{"query":"query { repository(owner: \"%s\", name: \"%s\") { issues(first: 3, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number title } } } }"}`, cfg.GitHubOrg, cfg.GitHubRepo),
 		},
 		{
-			"Iteration field configuration",
-			fmt.Sprintf(`{"query":"query { organization(login: \"%s\") { projectV2(number: %d) { field(name: \"Iteration\") { ... on ProjectV2IterationField { id configuration { iterations { title startDate duration } completedIterations { title startDate duration } } } } } } }"}`, cfg.GitHubOrg, cfg.ProjectNumber),
+			fmt.Sprintf("Iteration field configuration (#%d)", projNum),
+			fmt.Sprintf(`{"query":"query { organization(login: \"%s\") { projectV2(number: %d) { field(name: \"Iteration\") { ... on ProjectV2IterationField { id configuration { iterations { title startDate duration } completedIterations { title startDate duration } } } } } } }"}`, cfg.GitHubOrg, projNum),
 		},
 	}
 
@@ -136,12 +142,11 @@ func main() {
 	}
 
 	ghClient := &github.Client{
-		HTTPClient:    httpClient,
-		Token:         ghToken,
-		GraphQLURL:    "https://api.github.com/graphql",
-		RestBaseURL:   "https://api.github.com",
-		Org:           cfg.GitHubOrg,
-		ProjectNumber: cfg.ProjectNumber,
+		HTTPClient:  httpClient,
+		Token:       ghToken,
+		GraphQLURL:  "https://api.github.com/graphql",
+		RestBaseURL: "https://api.github.com",
+		Org:         cfg.GitHubOrg,
 	}
 
 	syncer := &sync.Syncer{
@@ -156,8 +161,14 @@ func main() {
 		Logger:           slog.Default(),
 	}
 
-	if err := syncer.Run(ctx); err != nil {
-		slog.Error("sync failed", "error", err)
+	var failed bool
+	for _, proj := range cfg.Projects {
+		if err := syncer.Run(ctx, proj.ProjectNumber, proj.Name); err != nil {
+			slog.Error("sync failed", "project", proj.Name, "project_number", proj.ProjectNumber, "error", err)
+			failed = true
+		}
+	}
+	if failed {
 		os.Exit(1)
 	}
 }

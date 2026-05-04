@@ -25,22 +25,30 @@ type Syncer struct {
 	Logger           *slog.Logger
 }
 
-// Run performs the sync: fetch deployed SHA, check project issues, update shipped status.
-func (s *Syncer) Run(ctx context.Context) error {
+// Run performs the sync for a single project: fetch deployed SHA, check project issues,
+// update shipped status, and assign iterations.
+func (s *Syncer) Run(ctx context.Context, projectNumber int, projectName string) error {
+	if projectName == "" {
+		projectName = fmt.Sprintf("project #%d", projectNumber)
+	}
+	logger := s.Logger.With("project", projectName)
+
 	deployedSHA, err := s.Prodver.FetchDeployedSHA(ctx)
 	if err != nil {
 		return fmt.Errorf("fetching deployed SHA: %w", err)
 	}
-	s.Logger.Info("fetched deployed SHA", "sha", deployedSHA)
+	logger.Info("fetched deployed SHA", "sha", deployedSHA)
 
-	projectData, err := s.ProjectQuerier.GetProjectItems(ctx)
+	projectData, err := s.ProjectQuerier.GetProjectItems(ctx, projectNumber)
 	if err != nil {
 		return fmt.Errorf("fetching project items: %w", err)
 	}
-	s.Logger.Info("fetched project items", "count", len(projectData.Items))
+	logger.Info("fetched project items", "count", len(projectData.Items))
 
+	// Guard rail: skip projects missing the required Status/"Shipped" option.
 	if projectData.ShippedOptionID == "" {
-		return fmt.Errorf("no '🚢 Shipped' status option found in project; available options: %v", projectData.StatusOptions)
+		logger.Warn("skipping project: no 'Shipped' status option found", "available_options", projectData.StatusOptions)
+		return nil
 	}
 
 	targetRepo := s.Org + "/" + s.Repo
@@ -118,7 +126,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 
 		if !allDeployed {
 			notDeployed++
-			s.Logger.Debug("not yet deployed", "issue", item.Issue.Title, "number", item.Issue.Number)
+			logger.Debug("not yet deployed", "issue", item.Issue.Title, "number", item.Issue.Number)
 			skipped++
 			continue
 		}
@@ -126,7 +134,7 @@ func (s *Syncer) Run(ctx context.Context) error {
 		issueURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d", s.Org, s.Repo, item.Issue.Number)
 
 		if s.DryRun {
-			s.Logger.Info("would mark as shipped (dry-run)", "issue", item.Issue.Title, "number", item.Issue.Number, "url", issueURL)
+			logger.Info("would mark as shipped (dry-run)", "issue", item.Issue.Title, "number", item.Issue.Number, "url", issueURL)
 			updated++
 			continue
 		}
@@ -137,10 +145,10 @@ func (s *Syncer) Run(ctx context.Context) error {
 		}
 
 		updated++
-		s.Logger.Info("marked as shipped", "issue", item.Issue.Title, "number", item.Issue.Number, "url", issueURL)
+		logger.Info("marked as shipped", "issue", item.Issue.Title, "number", item.Issue.Number, "url", issueURL)
 	}
 
-	s.Logger.Info("shipping sync complete",
+	logger.Info("shipping sync complete",
 		"updated", updated,
 		"skipped", skipped,
 		"skip_no_issue", noIssue,
@@ -154,21 +162,21 @@ func (s *Syncer) Run(ctx context.Context) error {
 	)
 
 	// Second pass: assign iterations to Done/Shipped items missing one.
-	iterErrs := s.assignIterations(ctx, projectData)
-	errs = append(errs, iterErrs...)
+	if projectData.IterationFieldID == "" {
+		logger.Warn("skipping iteration assignment: no Iteration field found in project")
+	} else {
+		iterErrs := s.assignIterations(ctx, projectData, logger)
+		errs = append(errs, iterErrs...)
+	}
 
 	return errors.Join(errs...)
 }
 
 // assignIterations sets the iteration field for Done/Shipped items that don't have one,
 // based on the issue's closedAt date.
-func (s *Syncer) assignIterations(ctx context.Context, pd *github.ProjectData) []error {
-	if pd.IterationFieldID == "" {
-		s.Logger.Warn("no iteration field found in project, skipping iteration assignment")
-		return nil
-	}
+func (s *Syncer) assignIterations(ctx context.Context, pd *github.ProjectData, logger *slog.Logger) []error {
 	if len(pd.Iterations) == 0 {
-		s.Logger.Warn("no iterations configured in project, skipping iteration assignment")
+		logger.Warn("no iterations configured in project, skipping iteration assignment")
 		return nil
 	}
 
@@ -216,7 +224,7 @@ func (s *Syncer) assignIterations(ctx context.Context, pd *github.ProjectData) [
 		}
 
 		if s.DryRun {
-			s.Logger.Info("would set iteration (dry-run)",
+			logger.Info("would set iteration (dry-run)",
 				"issue", item.Issue.Title, "number", item.Issue.Number,
 				"iteration", iter.Title, "closedAt", item.Issue.ClosedAt)
 			iterUpdated++
@@ -229,10 +237,10 @@ func (s *Syncer) assignIterations(ctx context.Context, pd *github.ProjectData) [
 		}
 
 		iterUpdated++
-		s.Logger.Info("set iteration", "issue", item.Issue.Title, "number", item.Issue.Number, "iteration", iter.Title)
+		logger.Info("set iteration", "issue", item.Issue.Title, "number", item.Issue.Number, "iteration", iter.Title)
 	}
 
-	s.Logger.Info("iteration sync complete",
+	logger.Info("iteration sync complete",
 		"updated", iterUpdated,
 		"skipped", iterSkipped,
 		"skip_no_issue", noIssueCnt,

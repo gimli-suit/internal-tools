@@ -44,13 +44,12 @@ func TestGetProjectItems(t *testing.T) {
 
 	c := &Client{
 		HTTPClient:    srv.Client(),
-		Token:         "test-token",
-		GraphQLURL:    srv.URL,
-		Org:           "tailscale",
-		ProjectNumber: 1,
+		Token:      "test-token",
+		GraphQLURL: srv.URL,
+		Org:        "tailscale",
 	}
 
-	pd, err := c.GetProjectItems(context.Background())
+	pd, err := c.GetProjectItems(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -103,13 +102,12 @@ func TestGetProjectItems_GraphQLError(t *testing.T) {
 
 	c := &Client{
 		HTTPClient:    srv.Client(),
-		Token:         "test-token",
-		GraphQLURL:    srv.URL,
-		Org:           "tailscale",
-		ProjectNumber: 1,
+		Token:      "test-token",
+		GraphQLURL: srv.URL,
+		Org:        "tailscale",
 	}
 
-	_, err := c.GetProjectItems(context.Background())
+	_, err := c.GetProjectItems(context.Background(), 1)
 	if err == nil {
 		t.Fatal("expected error for GraphQL error response")
 	}
@@ -138,13 +136,12 @@ func TestGetProjectItems_Pagination(t *testing.T) {
 
 	c := &Client{
 		HTTPClient:    srv.Client(),
-		Token:         "test-token",
-		GraphQLURL:    srv.URL,
-		Org:           "tailscale",
-		ProjectNumber: 1,
+		Token:      "test-token",
+		GraphQLURL: srv.URL,
+		Org:        "tailscale",
 	}
 
-	pd, err := c.GetProjectItems(context.Background())
+	pd, err := c.GetProjectItems(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
