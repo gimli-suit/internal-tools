@@ -4,7 +4,7 @@ CONF_DIR = /etc/github-deployed-issue-sync
 ENV_FILE = $(CONF_DIR)/.env
 LOG_DIR = /var/log/github-deployed-issue-sync
 LOG_FILE = $(LOG_DIR)/github-deployed-issue-sync.log
-CRON_JOB = */30 * * * * cd $(CONF_DIR) && $(INSTALL_DIR)/$(BINARY) >> $(LOG_FILE) 2>&1
+CRON_JOB = 0 * * * * cd $(CONF_DIR) && $(INSTALL_DIR)/$(BINARY) >> $(LOG_FILE) 2>&1
 
 .PHONY: build run dry-run check-auth install test clean install-cron uninstall-cron verify-cron
 
